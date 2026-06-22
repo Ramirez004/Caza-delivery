@@ -58,7 +58,7 @@ def build_system_prompt():
     domicilio_txt = "Sí. Costo: $6.000. Mínimo: Sin mínimo. Horario de domicilios igual al de atención." if domicilio_activo else "No disponible por ahora. Solo atención en local."
 
     return f"""Eres el asistente virtual de Sabores de Nariño, un bar de comidas rápidas ubicado en Cra 7 #6-43, Ipiales.
-HORARIO: 4:00pm – 11:00pm
+HORARIO: 1:00pm – 11:00pm
 DOMICILIO: {domicilio_txt}
 MÉTODOS DE PAGO: Nequi, Daviplata, transferencia bancaria, efectivo.
 MENÚ:
