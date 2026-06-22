@@ -36,10 +36,10 @@ domicilio_activo = True
 tiempo_espera = None  # en minutos, None = sin aviso
 
 def esta_abierto():
-    """Retorna True si el local está en horario de atención (4pm - 11pm hora Colombia)"""
+    """Retorna True si el local está en horario de atención (1pm - 11pm hora Colombia)"""
     ahora = datetime.now(ZONA_HORARIA)
     hora = ahora.hour
-    return 16 <= hora < 23
+    return 13 <= hora < 23
 
 def build_system_prompt():
     menu_activo = []
