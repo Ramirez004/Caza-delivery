@@ -2,6 +2,9 @@ from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse
 import anthropic, requests, os, traceback
 from dotenv import load_dotenv
+from datetime import datetime
+import pytz
+
 load_dotenv()
 
 app = FastAPI()
@@ -11,10 +14,11 @@ PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
 
 ADMIN_NUMBER = "573167731698"
+ZONA_HORARIA = pytz.timezone("America/Bogota")
 
 historial = {}
 
-# Menú base (se puede modificar en tiempo real desde WhatsApp)
+# Menú base
 menu = {
     "hamburguesas": "Hamburguesas: Sencilla $16.000 / Doble Carne $24.000 / Especial $22.000 / Mixta $26.000 / Ranchera $28.000",
     "perros": "Perros: Sencillo $10.000 / Especial $14.000 / Ranchero $17.000",
@@ -26,14 +30,16 @@ menu = {
     "combos": "Combos: Hamburguesa Sencilla+Papas+Gaseosa $24.000 / Hamburguesa Especial+Papas+Gaseosa $30.000 / Perro Especial+Papas+Gaseosa $22.000 / Salchipapa Especial+Gaseosa $21.000 / Burrito Mixto+Gaseosa $27.000",
 }
 
-# Categorías desactivadas temporalmente
 categorias_desactivadas = set()
-
-# Notas extra del admin (ej: "No hay papas grandes hoy")
 notas_admin = []
-
-# Estado del domicilio
 domicilio_activo = True
+tiempo_espera = None  # en minutos, None = sin aviso
+
+def esta_abierto():
+    """Retorna True si el local está en horario de atención (4pm - 11pm hora Colombia)"""
+    ahora = datetime.now(ZONA_HORARIA)
+    hora = ahora.hour
+    return 16 <= hora < 23
 
 def build_system_prompt():
     menu_activo = []
@@ -45,6 +51,10 @@ def build_system_prompt():
     if notas_admin:
         notas = "\nNOTAS ESPECIALES DE HOY:\n- " + "\n- ".join(notas_admin)
 
+    espera_txt = ""
+    if tiempo_espera:
+        espera_txt = f"\nTIEMPO DE ESPERA ACTUAL: {tiempo_espera} minutos. Infórmalo al cliente al confirmar su pedido."
+
     domicilio_txt = "Sí. Costo: $6.000. Mínimo: Sin mínimo. Horario de domicilios igual al de atención." if domicilio_activo else "No disponible por ahora. Solo atención en local."
 
     return f"""Eres el asistente virtual de Sabores de Nariño, un bar de comidas rápidas ubicado en Cra 7 #6-43, Ipiales.
@@ -53,7 +63,7 @@ DOMICILIO: {domicilio_txt}
 MÉTODOS DE PAGO: Nequi, Daviplata, transferencia bancaria, efectivo.
 MENÚ:
 {chr(10).join(menu_activo)}
-{notas}
+{notas}{espera_txt}
 INSTRUCCIONES:
 - Habla amigable y natural como empleado real.
 - Al pedir, confirma cada ítem con precio y muestra el total.
@@ -64,77 +74,100 @@ INSTRUCCIONES:
 - Si una categoría no está en el menú de hoy, dile amablemente que no está disponible por ahora.
 - Responde siempre en español."""
 
+def notificar_pedido_admin(numero_cliente, resumen_pedido):
+    """Envía notificación al admin cuando el bot confirma un pedido"""
+    mensaje = (
+        f"🛎️ *Pedido nuevo*\n"
+        f"📱 Cliente: +{numero_cliente}\n"
+        f"────────────────\n"
+        f"{resumen_pedido}"
+    )
+    enviar_whatsapp(ADMIN_NUMBER, mensaje)
+
 def procesar_comando_admin(texto):
-    """Procesa comandos del admin y retorna respuesta"""
-    global domicilio_activo
-    texto = texto.strip().lower()
+    global domicilio_activo, tiempo_espera
+    t = texto.strip().lower()
 
     # DOMICILIO
-    if texto in ["quita domicilio", "desactiva domicilio", "sin domicilio", "no hay domicilio"]:
+    if t in ["quita domicilio", "desactiva domicilio", "sin domicilio", "no hay domicilio"]:
         domicilio_activo = False
         return "✅ Domicilio desactivado. Los clientes verán que no hay domicilio por ahora."
-
-    if texto in ["activa domicilio", "pon domicilio", "hay domicilio"]:
+    if t in ["activa domicilio", "pon domicilio", "hay domicilio"]:
         domicilio_activo = True
         return "✅ Domicilio activado de nuevo."
 
+    # TIEMPO DE ESPERA: "espera 30"
+    if t.startswith("espera "):
+        minutos = t.replace("espera ", "").strip()
+        if minutos.isdigit():
+            tiempo_espera = int(minutos)
+            return f"✅ Tiempo de espera actualizado a *{minutos} minutos*. Los clientes serán informados."
+        return "⚠️ Usa el formato: *espera 30* (número de minutos)"
+
+    if t in ["sin espera", "quita espera", "espera normal"]:
+        tiempo_espera = None
+        return "✅ Tiempo de espera eliminado."
+
     # QUITAR categoría
-    if texto.startswith("quita ") or texto.startswith("desactiva "):
-        palabra = texto.replace("quita ", "").replace("desactiva ", "").strip()
+    if t.startswith("quita ") or t.startswith("desactiva "):
+        palabra = t.replace("quita ", "").replace("desactiva ", "").strip()
         for key in menu.keys():
             if palabra in key or key in palabra:
                 categorias_desactivadas.add(key)
-                return f"✅ *{key.capitalize()}* desactivado del menú. Los clientes no lo verán."
-        return f"⚠️ No encontré la categoría '{palabra}'. Categorías disponibles: {', '.join(menu.keys())}"
+                return f"✅ *{key.capitalize()}* desactivado del menú."
+        return f"⚠️ No encontré '{palabra}'. Categorías: {', '.join(menu.keys())}"
 
     # ACTIVAR categoría
-    if texto.startswith("activa ") or texto.startswith("pon "):
-        palabra = texto.replace("activa ", "").replace("pon ", "").strip()
+    if t.startswith("activa ") or t.startswith("pon "):
+        palabra = t.replace("activa ", "").replace("pon ", "").strip()
         for key in menu.keys():
             if palabra in key or key in palabra:
                 categorias_desactivadas.discard(key)
                 return f"✅ *{key.capitalize()}* activado de nuevo en el menú."
-        return f"⚠️ No encontré la categoría '{palabra}'."
+        return f"⚠️ No encontré '{palabra}'."
 
-    # AGREGAR nota
-    if texto.startswith("nota ") or texto.startswith("agrega nota "):
-        nota = texto.replace("nota ", "").replace("agrega nota ", "").strip()
+    # NOTAS
+    if t.startswith("nota ") or t.startswith("agrega nota "):
+        nota = t.replace("nota ", "").replace("agrega nota ", "").strip()
         notas_admin.append(nota)
         return f"✅ Nota agregada: '{nota}'"
-
-    # BORRAR notas
-    if texto in ["borra notas", "borrar notas", "sin notas", "quita notas"]:
+    if t in ["borra notas", "borrar notas", "sin notas", "quita notas"]:
         notas_admin.clear()
         return "✅ Todas las notas borradas."
 
-    # VER estado actual
-    if texto in ["estado", "menu", "menú", "ver menu", "ver menú"]:
+    # ESTADO
+    if t in ["estado", "menu", "menú", "ver menu", "ver menú"]:
         activos = [k for k in menu.keys() if k not in categorias_desactivadas]
         desactivos = list(categorias_desactivadas)
         notas_txt = "\n- ".join(notas_admin) if notas_admin else "ninguna"
+        espera_txt = f"{tiempo_espera} min" if tiempo_espera else "sin aviso"
+        abierto = "✅ Abierto" if esta_abierto() else "❌ Cerrado"
         return (
-            f"📋 *Estado del menú:*\n"
+            f"📋 *Estado actual:*\n"
+            f"🕐 Local: {abierto}\n"
             f"✅ Activos: {', '.join(activos) if activos else 'ninguno'}\n"
             f"❌ Desactivados: {', '.join(desactivos) if desactivos else 'ninguno'}\n"
             f"🛵 Domicilio: {'✅ Activo' if domicilio_activo else '❌ Desactivado'}\n"
+            f"⏱️ Espera: {espera_txt}\n"
             f"📝 Notas: {notas_txt}"
         )
 
     # AYUDA
-    if texto in ["ayuda", "help", "comandos"]:
+    if t in ["ayuda", "help", "comandos"]:
         return (
             "🛠️ *Comandos de admin:*\n\n"
-            "• *quita hamburguesas* → desactiva del menú\n"
-            "• *activa hamburguesas* → reactiva\n"
-            "• *quita domicilio* → desactiva domicilios\n"
-            "• *activa domicilio* → reactiva domicilios\n"
-            "• *nota no hay papas grandes* → agrega nota especial\n"
-            "• *borra notas* → elimina todas las notas\n"
-            "• *estado* → ver qué está activo/desactivado\n\n"
+            "• *quita hamburguesas* → desactiva categoría\n"
+            "• *activa hamburguesas* → reactiva categoría\n"
+            "• *quita domicilio* / *activa domicilio*\n"
+            "• *espera 30* → avisa 30 min de espera\n"
+            "• *sin espera* → quita el aviso\n"
+            "• *nota no hay doble carne* → nota especial\n"
+            "• *borra notas* → elimina notas\n"
+            "• *estado* → ver todo\n\n"
             "Categorías: hamburguesas, perros, salchipapas, mazorcadas, burritos, otros, bebidas, combos"
         )
 
-    return None  # No es un comando conocido
+    return None
 
 def enviar_whatsapp(numero, mensaje):
     url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
@@ -166,7 +199,6 @@ async def recibir_mensaje(request: Request):
     try:
         entry = data["entry"][0]["changes"][0]["value"]
         if "messages" not in entry:
-            print("No hay 'messages' en este evento (puede ser un status update)")
             return {"status": "ok"}
 
         mensaje = entry["messages"][0]
@@ -180,9 +212,13 @@ async def recibir_mensaje(request: Request):
             if respuesta_admin:
                 enviar_whatsapp(numero, respuesta_admin)
                 return {"status": "ok"}
-            # Si no es comando, el admin puede chatear normal con el bot también
 
-        # ── CLIENTE (o admin chateando normal) ──
+        # ── HORARIO: si está cerrado, respuesta automática sin gastar Claude ──
+        if not esta_abierto() and numero != ADMIN_NUMBER:
+            enviar_whatsapp(numero, "¡Hola! 😊 Gracias por escribirnos. Por ahora estamos cerrados. Nuestro horario es de *4:00pm a 11:00pm*. ¡Te esperamos pronto! 🍔")
+            return {"status": "ok"}
+
+        # ── CLIENTE ──
         if numero not in historial:
             historial[numero] = []
         historial[numero].append({"role": "user", "content": texto})
@@ -202,6 +238,12 @@ async def recibir_mensaje(request: Request):
             historial[numero] = historial[numero][-20:]
 
         enviar_whatsapp(numero, texto_respuesta)
+
+        # ── NOTIFICAR AL ADMIN si el bot confirmó un pedido ──
+        palabras_pedido = ["total:", "tu pedido", "pedido confirmado", "resumen del pedido", "dirección"]
+        if any(p in texto_respuesta.lower() for p in palabras_pedido):
+            notificar_pedido_admin(numero, texto_respuesta)
+
         print("Mensaje enviado a WhatsApp")
 
     except Exception as e:
