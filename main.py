@@ -32,6 +32,9 @@ categorias_desactivadas = set()
 # Notas extra del admin (ej: "No hay papas grandes hoy")
 notas_admin = []
 
+# Estado del domicilio
+domicilio_activo = True
+
 def build_system_prompt():
     menu_activo = []
     for key, linea in menu.items():
@@ -42,9 +45,11 @@ def build_system_prompt():
     if notas_admin:
         notas = "\nNOTAS ESPECIALES DE HOY:\n- " + "\n- ".join(notas_admin)
 
+    domicilio_txt = "Sí. Costo: $6.000. Mínimo: Sin mínimo. Horario de domicilios igual al de atención." if domicilio_activo else "No disponible por ahora. Solo atención en local."
+
     return f"""Eres el asistente virtual de Sabores de Nariño, un bar de comidas rápidas ubicado en Cra 7 #6-43, Ipiales.
 HORARIO: 4:00pm – 11:00pm
-DOMICILIO: Sí. Costo: $6.000. Mínimo: Sin mínimo. Horario de domicilios igual al de atención.
+DOMICILIO: {domicilio_txt}
 MÉTODOS DE PAGO: Nequi, Daviplata, transferencia bancaria, efectivo.
 MENÚ:
 {chr(10).join(menu_activo)}
@@ -61,7 +66,17 @@ INSTRUCCIONES:
 
 def procesar_comando_admin(texto):
     """Procesa comandos del admin y retorna respuesta"""
+    global domicilio_activo
     texto = texto.strip().lower()
+
+    # DOMICILIO
+    if texto in ["quita domicilio", "desactiva domicilio", "sin domicilio", "no hay domicilio"]:
+        domicilio_activo = False
+        return "✅ Domicilio desactivado. Los clientes verán que no hay domicilio por ahora."
+
+    if texto in ["activa domicilio", "pon domicilio", "hay domicilio"]:
+        domicilio_activo = True
+        return "✅ Domicilio activado de nuevo."
 
     # QUITAR categoría
     if texto.startswith("quita ") or texto.startswith("desactiva "):
@@ -101,6 +116,7 @@ def procesar_comando_admin(texto):
             f"📋 *Estado del menú:*\n"
             f"✅ Activos: {', '.join(activos) if activos else 'ninguno'}\n"
             f"❌ Desactivados: {', '.join(desactivos) if desactivos else 'ninguno'}\n"
+            f"🛵 Domicilio: {'✅ Activo' if domicilio_activo else '❌ Desactivado'}\n"
             f"📝 Notas: {notas_txt}"
         )
 
@@ -110,6 +126,8 @@ def procesar_comando_admin(texto):
             "🛠️ *Comandos de admin:*\n\n"
             "• *quita hamburguesas* → desactiva del menú\n"
             "• *activa hamburguesas* → reactiva\n"
+            "• *quita domicilio* → desactiva domicilios\n"
+            "• *activa domicilio* → reactiva domicilios\n"
             "• *nota no hay papas grandes* → agrega nota especial\n"
             "• *borra notas* → elimina todas las notas\n"
             "• *estado* → ver qué está activo/desactivado\n\n"
@@ -191,3 +209,4 @@ async def recibir_mensaje(request: Request):
         traceback.print_exc()
 
     return {"status": "ok"}
+
