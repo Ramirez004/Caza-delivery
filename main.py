@@ -26,7 +26,9 @@ pedidos = []
 
 
 def registrar_pedido(numero_cliente, resumen, confirmacion_bot):
-    """Crea un pedido nuevo en la lista al detectar cierre de conversación."""
+    """Crea un pedido nuevo, o si el cliente ya tiene uno activo/preparando,
+    actualiza ESE MISMO pedido en lugar de crear un duplicado.
+    Devuelve (pedido, es_nuevo)."""
     es_domicilio = "camino" in confirmacion_bot.lower() or "domicilio" in confirmacion_bot.lower()
     tipo = "domicilio" if es_domicilio else "recoger"
 
@@ -41,6 +43,21 @@ def registrar_pedido(numero_cliente, resumen, confirmacion_bot):
             direccion = confirmacion_bot[inicio:].split(".")[0].strip()
 
     ahora = datetime.now(ZONA_HORARIA)
+
+    # ¿El cliente ya tiene un pedido activo/preparando? Si sí, lo ACTUALIZAMOS
+    # en vez de crear uno nuevo (evita duplicados cuando el cliente modifica
+    # y vuelve a confirmar con el bot).
+    existente = buscar_pedido_cliente(numero_cliente)
+    if existente:
+        existente["resumen"] = resumen
+        existente["confirmacion"] = confirmacion_bot
+        existente["direccion"] = direccion if direccion else existente["direccion"]
+        existente["tipo"] = tipo
+        existente["estado"] = "activo"
+        existente["hora"] = ahora.strftime("%I:%M %p")
+        existente["hora_iso"] = ahora.isoformat()
+        return existente, False
+
     pedido = {
         "id": str(uuid.uuid4())[:8].upper(),
         "numero": numero_cliente,
@@ -57,7 +74,7 @@ def registrar_pedido(numero_cliente, resumen, confirmacion_bot):
     pedidos.append(pedido)
     if len(pedidos) > 100:
         pedidos.pop(0)
-    return pedido
+    return pedido, True
 
 
 def buscar_pedido_cliente(numero_cliente):
@@ -116,9 +133,10 @@ INSTRUCCIONES CRÍTICAS PARA MANEJO DEL PEDIDO:
 - Solo entonces muestra el resumen completo con todos los productos y el total.
 
 INSTRUCCIONES SOBRE LA DIRECCIÓN (MUY IMPORTANTE):
-- Si el cliente YA mencionó en cualquier parte de la conversación un lugar de entrega (edificio, casa, barrio, calle, conjunto residencial, punto de referencia — ejemplo: "para el edificio IPK", "en mi casa del barrio X", "a la calle 5"), eso significa que el pedido es DOMICILIO y esa es la dirección. NO preguntes "¿es domicilio o para recoger?" ni vuelvas a pedir la dirección: ya la tienes.
-- En ese caso, al cerrar el pedido confirma directamente con exactamente: "Perfecto, domicilio a [la dirección que mencionó el cliente]. Tu pedido ya está en camino 🛵"
-- Solo si el cliente NO ha mencionado ningún lugar de entrega, pregunta: "¿Es para domicilio o para recoger en el local?". Si responde domicilio y aún no diste dirección, ahí sí pídela.
+- Si el cliente YA mencionó en cualquier parte de la conversación —incluso desde su primer mensaje— un lugar de entrega (edificio, casa, barrio, calle, conjunto residencial, punto de referencia — ejemplo: "para el edificio IPK", "en mi casa del barrio X", "a la calle 5"), eso significa que el pedido es DOMICILIO y esa es la dirección. NO preguntes "¿es domicilio o para recoger?".
+- En ese caso, antes de cerrar el pedido, confirma esa dirección y pregunta si hay algún detalle adicional, así: "Perfecto, te lo enviamos al Edificio IPK 🛵 ¿Hay algún detalle adicional (apartamento, torre, punto de referencia) o así está bien?". Espera la respuesta del cliente.
+- Una vez el cliente confirme (diga "así está bien", "correcto", o dé un detalle extra como el apartamento/torre), NO vuelvas a preguntar la dirección. Cierra el pedido con exactamente: "Perfecto, domicilio a [dirección + detalle si lo dio]. Tu pedido ya está en camino 🛵"
+- Solo si el cliente NO ha mencionado ningún lugar de entrega, pregunta: "¿Es para domicilio o para recoger en el local?". Si responde domicilio y aún no diste dirección, ahí sí pídela completa.
 - Si es para recoger, confirma con: "Perfecto, tu pedido estará listo para recoger en Cra 7 #6-43 🍔"
 - No repitas el resumen ni el total después de confirmar.
 - No inventes productos ni precios. Si no sabes algo, sugiere llamar.
@@ -136,11 +154,29 @@ def enviar_whatsapp(numero, mensaje):
 
 
 def notificar_pedido_admin(numero_cliente, pedido):
-    """Notifica al admin por WhatsApp con los detalles del pedido."""
+    """Notifica al admin por WhatsApp con los detalles de un pedido NUEVO."""
     icono = "🛵" if pedido["tipo"] == "domicilio" else "🏠"
     ahora = datetime.now(ZONA_HORARIA).strftime("%I:%M %p")
     mensaje = (
         f"🛎️ *Pedido #{pedido['id']}*\n"
+        f"📱 Cliente: +{numero_cliente}\n"
+        f"🕐 Hora: {ahora}\n"
+        f"{icono} Tipo: {'Domicilio' if pedido['tipo'] == 'domicilio' else 'Recoger en local'}\n"
+        f"📍 Dirección: {pedido['direccion']}\n"
+        f"────────────────\n"
+        f"{pedido['resumen']}\n"
+        f"────────────────\n"
+        f"👉 Ver panel: {os.getenv('PANEL_URL', 'Tu URL de Railway')}/panel"
+    )
+    enviar_whatsapp(ADMIN_NUMBER, mensaje)
+
+
+def notificar_pedido_actualizado_admin(numero_cliente, pedido):
+    """Notifica al admin que un pedido EXISTENTE fue actualizado (no es nuevo)."""
+    icono = "🛵" if pedido["tipo"] == "domicilio" else "🏠"
+    ahora = datetime.now(ZONA_HORARIA).strftime("%I:%M %p")
+    mensaje = (
+        f"🔄 *Pedido #{pedido['id']} actualizado*\n"
         f"📱 Cliente: +{numero_cliente}\n"
         f"🕐 Hora: {ahora}\n"
         f"{icono} Tipo: {'Domicilio' if pedido['tipo'] == 'domicilio' else 'Recoger en local'}\n"
@@ -249,17 +285,24 @@ PANEL_HTML = """<!DOCTYPE html>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #1a1a1a; color: #fff; padding: 20px; min-height: 100vh; }
         .container { max-width: 1300px; margin: 0 auto; }
-        header { margin-bottom: 25px; border-bottom: 2px solid #f5a623; padding-bottom: 15px; }
+        header { margin-bottom: 20px; border-bottom: 2px solid #f5a623; padding-bottom: 15px; }
         .header-top { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
         h1 { font-size: 1.6rem; color: #f5a623; }
         .header-buttons { display: flex; gap: 10px; }
         .btn-refrescar { background: #2196F3; color: #fff; border: none; padding: 10px 18px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 0.9rem; }
         .btn-refrescar:hover { background: #1976D2; }
-        .btn-refrescar.girando { animation: girar 0.6s linear; }
+        .btn-refrescar.girando .icono-refresh { display: inline-block; animation: girar 0.6s linear; }
         @keyframes girar { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         .logout-btn { background: #f44336; color: white; padding: 10px 18px; border-radius: 6px; border: none; cursor: pointer; font-weight: bold; font-size: 0.9rem; }
         .logout-btn:hover { background: #d32f2f; }
         .header-info { display: flex; gap: 20px; margin-top: 12px; font-size: 0.85rem; color: #ccc; flex-wrap: wrap; }
+
+        /* PESTAÑAS */
+        .tabs { display: flex; gap: 8px; margin: 18px 0; flex-wrap: wrap; }
+        .tab-btn { background: #2d2d2d; color: #ccc; border: 1px solid #444; padding: 9px 16px; border-radius: 20px; cursor: pointer; font-size: 0.85rem; font-weight: bold; transition: all .15s; }
+        .tab-btn:hover { border-color: #f5a623; color: #fff; }
+        .tab-btn.tab-activo { background: #f5a623; color: #1a1a1a; border-color: #f5a623; }
+
         .pedidos-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 18px; }
         .pedido-card { background: #2d2d2d; border-left: 4px solid #f5a623; border-radius: 8px; padding: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
         .pedido-id { font-size: 1.15rem; font-weight: bold; color: #f5a623; }
@@ -272,26 +315,23 @@ PANEL_HTML = """<!DOCTYPE html>
         .modificaciones { border-left: 3px solid #FF9800; }
         .quejas { border-left: 3px solid #f44336; }
 
-        .estado-select { width: 100%; padding: 6px; background: #1a1a1a; border: 1px solid #555; border-radius: 4px; color: #fff; margin: 10px 0 8px; cursor: pointer; font-size: 0.78rem; }
+        /* ESTADO: solo texto + botones, sin lista desplegable */
+        .estado-label { text-align: center; font-size: 0.8rem; font-weight: bold; margin: 10px 0 6px; padding: 4px; border-radius: 4px; }
+        .estado-label.activo     { color: #4CAF50; }
+        .estado-label.preparando { color: #FF9800; }
+        .estado-label.enviado    { color: #2196F3; }
+        .estado-label.entregado  { color: #BA68C8; }
+        .estado-label.cancelado  { color: #f44336; }
 
-        .badge-row { display: flex; justify-content: center; margin-bottom: 10px; }
-        .estado-badge { display: inline-flex; align-items: center; gap: 5px; padding: 5px 14px; border-radius: 20px; font-size: 0.78rem; font-weight: bold; }
-        .estado-activo    { background: #4CAF50; color: #fff; }
-        .estado-preparando{ background: #FF9800; color: #fff; }
-        .estado-enviado   { background: #2196F3; color: #fff; }
-        .estado-entregado { background: #9C27B0; color: #fff; box-shadow: 0 0 0 2px #9C27B0 inset; }
-        .estado-cancelado { background: #f44336; color: #fff; }
-
-        .btn-accion { width: 100%; padding: 10px; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 0.85rem; color: #fff; }
-        .btn-preparar { background: #FF9800; }
-        .btn-preparar:hover { background: #e08600; }
-        .btn-enviar { background: #2196F3; }
-        .btn-enviar:hover { background: #1976D2; }
-        .btn-entregar { background: #9C27B0; }
-        .btn-entregar:hover { background: #7B1FA2; }
-        .accion-final { text-align: center; padding: 10px; border-radius: 6px; font-weight: bold; font-size: 0.85rem; }
-        .accion-final.entregado { background: rgba(156,39,176,0.15); color: #CE93D8; border: 1px solid #9C27B0; }
-        .accion-final.cancelado { background: rgba(244,67,54,0.15); color: #EF9A9A; border: 1px solid #f44336; }
+        .estado-botones { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; }
+        .eb { padding: 9px 0; border: none; border-radius: 6px; cursor: pointer; font-size: 1rem; background: #1a1a1a; color: #666; opacity: 0.5; transition: all .15s; }
+        .eb:hover { opacity: 0.85; }
+        .eb.eb-on { opacity: 1; }
+        .eb-activo.eb-on     { background: #4CAF50; color: #fff; }
+        .eb-preparando.eb-on { background: #FF9800; color: #fff; }
+        .eb-enviado.eb-on    { background: #2196F3; color: #fff; }
+        .eb-entregado.eb-on  { background: #9C27B0; color: #fff; }
+        .eb-cancelado.eb-on  { background: #f44336; color: #fff; }
 
         .empty-state { text-align: center; padding: 60px 20px; color: #aaa; font-size: 1rem; }
     </style>
@@ -302,7 +342,7 @@ PANEL_HTML = """<!DOCTYPE html>
         <div class="header-top">
             <h1>🍔 Sabores de Nariño - Panel de Pedidos</h1>
             <div class="header-buttons">
-                <button class="btn-refrescar" id="btn-refrescar" onclick="actualizarTodo()">🔄 Actualizar todo</button>
+                <button class="btn-refrescar" id="btn-refrescar" onclick="actualizarTodo()"><span class="icono-refresh">🔄</span> Actualizar todo</button>
                 <button class="logout-btn" onclick="logout()">Cerrar sesión</button>
             </div>
         </div>
@@ -313,12 +353,21 @@ PANEL_HTML = """<!DOCTYPE html>
         </div>
     </header>
 
+    <div class="tabs">
+        <button class="tab-btn tab-activo" data-tab="todos" onclick="cambiarTab('todos')">📋 Todos <span id="cnt-todos"></span></button>
+        <button class="tab-btn" data-tab="preparacion" onclick="cambiarTab('preparacion')">🍳 En preparación <span id="cnt-preparacion"></span></button>
+        <button class="tab-btn" data-tab="enviados" onclick="cambiarTab('enviados')">🛵 Enviados <span id="cnt-enviados"></span></button>
+        <button class="tab-btn" data-tab="entregados" onclick="cambiarTab('entregados')">✅ Entregados <span id="cnt-entregados"></span></button>
+    </div>
+
     <div id="pedidos-container" class="pedidos-grid"></div>
-    <div id="empty-state" class="empty-state" style="display:none;">No hay pedidos aún</div>
+    <div id="empty-state" class="empty-state" style="display:none;">No hay pedidos en esta pestaña</div>
 </div>
 
 <script>
 const password = "{{PANEL_PASSWORD}}";
+let pedidosActuales = [];
+let tabActual = 'todos';
 
 function logout() {
     window.location.href = '/panel';
@@ -332,8 +381,10 @@ async function cargarPedidos() {
             throw new Error('HTTP ' + response.status);
         }
         const data = await response.json();
-        renderizarPedidos(data.pedidos);
-        actualizarStats(data.pedidos);
+        pedidosActuales = data.pedidos;
+        renderizarPedidos();
+        actualizarStats(pedidosActuales);
+        actualizarContadoresTabs(pedidosActuales);
     } catch (error) {
         console.error('Error al cargar pedidos:', error);
     }
@@ -343,43 +394,58 @@ function actualizarTodo() {
     const btn = document.getElementById('btn-refrescar');
     btn.classList.add('girando');
     cargarPedidos().finally(() => {
-        setTimeout(() => btn.classList.remove('girando'), 400);
+        setTimeout(() => btn.classList.remove('girando'), 500);
     });
 }
 
-function badgeEstado(estado) {
+function cambiarTab(tab) {
+    tabActual = tab;
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('tab-activo'));
+    document.querySelector(`.tab-btn[data-tab="${tab}"]`).classList.add('tab-activo');
+    renderizarPedidos();
+}
+
+function filtrarPorTab(pedidos, tab) {
+    if (tab === 'preparacion') return pedidos.filter(p => p.estado === 'activo' || p.estado === 'preparando');
+    if (tab === 'enviados') return pedidos.filter(p => p.estado === 'enviado');
+    if (tab === 'entregados') return pedidos.filter(p => p.estado === 'entregado');
+    return pedidos; // todos
+}
+
+function actualizarContadoresTabs(pedidos) {
+    document.getElementById('cnt-todos').textContent = `(${pedidos.length})`;
+    document.getElementById('cnt-preparacion').textContent = `(${pedidos.filter(p => p.estado === 'activo' || p.estado === 'preparando').length})`;
+    document.getElementById('cnt-enviados').textContent = `(${pedidos.filter(p => p.estado === 'enviado').length})`;
+    document.getElementById('cnt-entregados').textContent = `(${pedidos.filter(p => p.estado === 'entregado').length})`;
+}
+
+function etiquetaEstado(estado) {
     const mapa = {
-        activo:     '🆕 Activo',
-        preparando: '🍳 Preparando',
-        enviado:    '🛵 Enviado',
-        entregado:  '✅ Entregado',
-        cancelado:  '❌ Cancelado',
+        activo: '🆕 Activo', preparando: '🍳 Preparando', enviado: '🛵 Enviado',
+        entregado: '✅ Entregado', cancelado: '❌ Cancelado',
     };
-    return `<span class="estado-badge estado-${estado}">${mapa[estado] || estado}</span>`;
+    return mapa[estado] || estado;
 }
 
-function accionRapida(estado, id) {
-    if (estado === 'activo') {
-        return `<button class="btn-accion btn-preparar" onclick="cambiarEstado('${id}','preparando')">🍳 Empezar a preparar</button>`;
-    }
-    if (estado === 'preparando') {
-        return `<button class="btn-accion btn-enviar" onclick="cambiarEstado('${id}','enviado')">🛵 Marcar como enviado</button>`;
-    }
-    if (estado === 'enviado') {
-        return `<button class="btn-accion btn-entregar" onclick="cambiarEstado('${id}','entregado')">✅ Marcar como entregado</button>`;
-    }
-    if (estado === 'entregado') {
-        return `<div class="accion-final entregado">✅ Pedido completado</div>`;
-    }
-    if (estado === 'cancelado') {
-        return `<div class="accion-final cancelado">❌ Pedido cancelado</div>`;
-    }
-    return '';
+function botonesEstado(estado, id) {
+    const estados = [
+        { key: 'activo', icon: '🆕', clase: 'eb-activo' },
+        { key: 'preparando', icon: '🍳', clase: 'eb-preparando' },
+        { key: 'enviado', icon: '🛵', clase: 'eb-enviado' },
+        { key: 'entregado', icon: '✅', clase: 'eb-entregado' },
+        { key: 'cancelado', icon: '❌', clase: 'eb-cancelado' },
+    ];
+    return estados.map(e => `
+        <button class="eb ${e.clase} ${estado === e.key ? 'eb-on' : ''}"
+                title="${e.key}"
+                onclick="cambiarEstado('${id}','${e.key}')">${e.icon}</button>
+    `).join('');
 }
 
-function renderizarPedidos(pedidos) {
+function renderizarPedidos() {
     const container = document.getElementById('pedidos-container');
     const emptyState = document.getElementById('empty-state');
+    const pedidos = filtrarPorTab(pedidosActuales, tabActual);
 
     if (pedidos.length === 0) {
         container.innerHTML = '';
@@ -405,18 +471,8 @@ function renderizarPedidos(pedidos) {
                 <div class="quejas"><strong>⚠️ Quejas:</strong><br>${p.quejas.join('<br>')}</div>
             ` : ''}
 
-            <div class="badge-row">${badgeEstado(p.estado)}</div>
-
-            ${accionRapida(p.estado, p.id)}
-
-            <select class="estado-select" onchange="cambiarEstado('${p.id}', this.value)">
-                <option value="" disabled selected>Cambiar manualmente...</option>
-                <option value="activo" ${p.estado === 'activo' ? 'selected' : ''}>Activo</option>
-                <option value="preparando" ${p.estado === 'preparando' ? 'selected' : ''}>Preparando</option>
-                <option value="enviado" ${p.estado === 'enviado' ? 'selected' : ''}>Enviado</option>
-                <option value="entregado" ${p.estado === 'entregado' ? 'selected' : ''}>Entregado</option>
-                <option value="cancelado" ${p.estado === 'cancelado' ? 'selected' : ''}>Cancelado</option>
-            </select>
+            <div class="estado-label ${p.estado}">${etiquetaEstado(p.estado)}</div>
+            <div class="estado-botones">${botonesEstado(p.estado, p.id)}</div>
         </div>
     `).join('');
 }
@@ -675,8 +731,11 @@ async def recibir_mensaje(request: Request):
                         resumen = msg["content"]
                         break
 
-            pedido = registrar_pedido(numero, resumen, texto_respuesta)
-            notificar_pedido_admin(numero, pedido)
+            pedido, es_nuevo = registrar_pedido(numero, resumen, texto_respuesta)
+            if es_nuevo:
+                notificar_pedido_admin(numero, pedido)
+            else:
+                notificar_pedido_actualizado_admin(numero, pedido)
 
     except Exception:
         traceback.print_exc()
