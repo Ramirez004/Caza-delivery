@@ -3,7 +3,7 @@ from fastapi.responses import PlainTextResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 import anthropic, requests, os, traceback, uuid
 from dotenv import load_dotenv
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 
 load_dotenv()
@@ -20,6 +20,23 @@ ZONA_HORARIA = pytz.timezone("America/Bogota")
 
 historial = {}
 mensajes_procesados = set()
+
+# Si un cliente que YA tiene un pedido activo escribe de nuevo dentro de este
+# intervalo, le preguntamos si quiere modificar ese pedido o hacer uno nuevo.
+INTERVALO_CORTO_MINUTOS = 15
+# numero -> texto del mensaje que generó la duda (mientras esperamos su respuesta)
+clientes_esperando_decision = {}
+
+
+def pedido_es_reciente(pedido, minutos=INTERVALO_CORTO_MINUTOS):
+    """True si el pedido se creó/actualizó hace menos de X minutos."""
+    try:
+        hora_pedido = datetime.fromisoformat(pedido["hora_iso"])
+        ahora = datetime.now(ZONA_HORARIA)
+        return (ahora - hora_pedido) <= timedelta(minutes=minutos)
+    except Exception:
+        return False
+
 
 # ── PEDIDOS ─────────────────────────────────────────────────────────────────
 pedidos = []
