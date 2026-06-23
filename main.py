@@ -56,9 +56,10 @@ def registrar_pedido(numero_cliente, resumen, confirmacion_bot):
         "direccion": direccion if direccion else ("En local" if tipo == "recoger" else "Ver resumen"),
         "tipo": tipo,
         "estado": "activo",
-        "modificaciones": [],  # Nuevas opciones
-        "quejas": [],
-        "cambios_platos": [],
+        "modificaciones": [],  # Cambios solicitados por cliente
+        "quejas": [],          # Problemas reportados
+        "cambios_platos": [],  # Cambios de platos
+        "notas_admin": [],     # Notas internas del admin (NO se envían)
     }
     pedidos.append(pedido)
     # Mantener solo los últimos 100 pedidos en memoria
@@ -436,6 +437,115 @@ PANEL_HTML = """
             padding: 40px;
             color: #aaa;
         }
+        
+        .notas-admin {
+            background: #1a1a1a;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+            font-size: 0.85rem;
+            border-left: 3px solid #9C27B0;
+        }
+        
+        /* MODAL STYLES */
+        #modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .modal-box {
+            background: linear-gradient(135deg, #2d2d2d 0%, #3d3d3d 100%);
+            border: 2px solid #f5a623;
+            border-radius: 10px;
+            padding: 30px;
+            max-width: 500px;
+            width: 90%;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+        }
+        
+        .modal-box h2 {
+            color: #f5a623;
+            margin-bottom: 20px;
+            font-size: 1.3rem;
+        }
+        
+        .modal-box textarea {
+            width: 100%;
+            padding: 12px;
+            background: #1a1a1a;
+            border: 1px solid #f5a623;
+            border-radius: 6px;
+            color: #fff;
+            font-family: inherit;
+            font-size: 0.95rem;
+            resize: vertical;
+            min-height: 100px;
+            margin-bottom: 15px;
+            box-sizing: border-box;
+        }
+        
+        .modal-box textarea:focus {
+            outline: none;
+            border-color: #e09510;
+            box-shadow: 0 0 8px rgba(245, 166, 35, 0.3);
+        }
+        
+        .modal-buttons {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .modal-buttons button {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 0.95rem;
+            margin-top: 0;
+            width: 100%;
+        }
+        
+        .modal-guardar {
+            background: #4CAF50;
+            color: white;
+        }
+        
+        .modal-guardar:hover {
+            background: #45a049;
+        }
+        
+        .modal-cancelar {
+            background: #666;
+            color: white;
+        }
+        
+        .modal-cancelar:hover {
+            background: #555;
+        }
+        
+        #modal-exito-msg {
+            display: none;
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #4CAF50;
+            color: white;
+            padding: 15px 25px;
+            border-radius: 6px;
+            font-weight: bold;
+            z-index: 1001;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
     </style>
 </head>
 <body>
@@ -461,6 +571,20 @@ PANEL_HTML = """
         <div id="pedidos-container" class="pedidos-grid"></div>
         <div id="empty-state" class="empty-state" style="display: none;">No hay pedidos aún</div>
     </div>
+    
+    <!-- MODAL PARA EDITAR PEDIDOS -->
+    <div id="modal-overlay">
+        <div class="modal-box">
+            <h2 id="modal-titulo">Actualizar pedido</h2>
+            <textarea id="modal-texto" placeholder="Escribe aquí..."></textarea>
+            <div class="modal-buttons">
+                <button class="modal-guardar" onclick="guardarModificacion()">✓ Guardar</button>
+                <button class="modal-cancelar" onclick="cerrarModal()">✕ Cancelar</button>
+            </div>
+        </div>
+    </div>
+    
+    <div id="modal-exito-msg">✅ ¡Guardado exitosamente!</div>
 </div>
 
 <script>
@@ -525,27 +649,34 @@ function renderizarPedidos(pedidos) {
             
             ${p.modificaciones && p.modificaciones.length > 0 ? `
                 <div class="modificaciones">
-                    <strong>📝 Modificaciones:</strong><br>
-                    ${p.modificaciones.join('<br>')}
+                    <strong>📝 Modificaciones del cliente:</strong><br>
+                    ${p.modificaciones.map(m => `<div style="margin: 5px 0; padding: 5px; background: #0a0a0a; border-radius: 3px;">${m}</div>`).join('')}
                 </div>
             ` : ''}
             
             ${p.quejas && p.quejas.length > 0 ? `
                 <div class="quejas">
-                    <strong>⚠️ Quejas:</strong><br>
-                    ${p.quejas.join('<br>')}
+                    <strong>⚠️ Quejas/Reclamaciones:</strong><br>
+                    ${p.quejas.map(q => `<div style="margin: 5px 0; padding: 5px; background: #0a0a0a; border-radius: 3px;">${q}</div>`).join('')}
                 </div>
             ` : ''}
             
             ${p.cambios_platos && p.cambios_platos.length > 0 ? `
                 <div class="cambios-platos">
                     <strong>🔄 Cambios de Platos:</strong><br>
-                    ${p.cambios_platos.join('<br>')}
+                    ${p.cambios_platos.map(c => `<div style="margin: 5px 0; padding: 5px; background: #0a0a0a; border-radius: 3px;">${c}</div>`).join('')}
                 </div>
             ` : ''}
             
-            <div>
-                <label>Estado:</label>
+            ${p.notas_admin && p.notas_admin.length > 0 ? `
+                <div class="notas-admin">
+                    <strong>📌 Notas Internas (Admin):</strong><br>
+                    ${p.notas_admin.map(n => `<div style="margin: 5px 0; padding: 5px; background: #0a0a0a; border-radius: 3px; font-size: 0.8rem; color: #aaa;">${n}</div>`).join('')}
+                </div>
+            ` : ''}
+            
+            <div style="margin-top: 15px; border-top: 1px solid #444; padding-top: 10px;">
+                <label style="display: block; margin-bottom: 8px; font-weight: bold;">Estado:</label>
                 <select class="estado-select" onchange="cambiarEstado('${p.id}', this.value)">
                     <option value="activo" ${p.estado === 'activo' ? 'selected' : ''}>Activo</option>
                     <option value="preparando" ${p.estado === 'preparando' ? 'selected' : ''}>Preparando</option>
@@ -555,8 +686,15 @@ function renderizarPedidos(pedidos) {
                 </select>
             </div>
             
-            <div style="text-align: center; margin-top: 10px;">
+            <div style="text-align: center; margin: 10px 0;">
                 <span class="estado-badge estado-${p.estado}">${p.estado.toUpperCase()}</span>
+            </div>
+            
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px;">
+                <button onclick="abrirModal('${p.id}', 'modificacion')" style="background: #FF9800; margin-top: 0;">📝 Actualizar</button>
+                <button onclick="abrirModal('${p.id}', 'cambio')" style="background: #00BCD4; margin-top: 0;">🔄 Cambio</button>
+                <button onclick="abrirModal('${p.id}', 'nota')" style="background: #9C27B0; margin-top: 0;">📌 Nota</button>
+                <button onclick="abrirModal('${p.id}', 'queja')" style="background: #f44336; margin-top: 0;">⚠️ Queja</button>
             </div>
         </div>
     `).join('');
@@ -586,6 +724,91 @@ function actualizarStats(pedidos) {
 
 // Recargar cada 5 segundos
 setInterval(cargarPedidos, 5000);
+
+// MODAL PARA AGREGAR MODIFICACIONES
+let modalActual = { pedidoId: null, tipo: null };
+
+function abrirModal(pedidoId, tipo) {
+    modalActual.pedidoId = pedidoId;
+    modalActual.tipo = tipo;
+    
+    let titulo = '';
+    let placeholder = '';
+    switch(tipo) {
+        case 'modificacion':
+            titulo = 'Actualizar pedido';
+            placeholder = 'Ej: Agrega extra queso, cambia la salsa, etc...';
+            break;
+        case 'cambio':
+            titulo = 'Registrar cambio de plato';
+            placeholder = 'Ej: Cliente quiere otro plato en lugar de...';
+            break;
+        case 'nota':
+            titulo = 'Agregar nota interna (solo para ti)';
+            placeholder = 'Ej: Cliente llamó diciendo que llegue rápido...';
+            break;
+        case 'queja':
+            titulo = 'Registrar reclamación del cliente';
+            placeholder = 'Ej: Producto llegó frio, faltó ingrediente, etc...';
+            break;
+    }
+    
+    document.getElementById('modal-titulo').textContent = titulo;
+    document.getElementById('modal-texto').placeholder = placeholder;
+    document.getElementById('modal-texto').value = '';
+    document.getElementById('modal-overlay').style.display = 'flex';
+    document.getElementById('modal-texto').focus();
+}
+
+function cerrarModal() {
+    document.getElementById('modal-overlay').style.display = 'none';
+    modalActual = { pedidoId: null, tipo: null };
+}
+
+async function guardarModificacion() {
+    const texto = document.getElementById('modal-texto').value.trim();
+    if (!texto) {
+        alert('Escribe algo');
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/pedidos/${modalActual.pedidoId}/modificacion`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                pw: password, 
+                modificacion: texto,
+                tipo: modalActual.tipo
+            })
+        });
+        
+        if (!response.ok) throw new Error('Error al guardar');
+        
+        // Mensaje de éxito
+        const msgExito = document.getElementById('modal-exito-msg');
+        msgExito.style.display = 'block';
+        setTimeout(() => {
+            msgExito.style.display = 'none';
+        }, 2000);
+        
+        // Limpiar y cargar
+        document.getElementById('modal-texto').value = '';
+        cargarPedidos();
+        
+        // Auto-cerrar modal después de un segundo
+        setTimeout(cerrarModal, 1000);
+    } catch (error) {
+        alert('Error: ' + error.message);
+    }
+}
+
+// Cerrar modal con tecla ESC
+document.addEventListener('keydown', function(event) {
+    if (event.key === 'Escape') {
+        cerrarModal();
+    }
+});
 </script>
 </body>
 </html>
@@ -703,6 +926,7 @@ async def agregar_modificacion(pedido_id: str, request: Request):
     body = await request.json()
     pw = body.get("pw", "")
     modificacion = body.get("modificacion", "")
+    tipo = body.get("tipo", "modificacion")  # modificacion, nota, cambio
 
     if pw != PANEL_PASSWORD:
         raise HTTPException(status_code=403, detail="No autorizado")
@@ -711,8 +935,25 @@ async def agregar_modificacion(pedido_id: str, request: Request):
     if not pedido:
         raise HTTPException(status_code=404, detail="Pedido no encontrado")
 
-    pedido["modificaciones"].append(modificacion)
-    enviar_whatsapp(pedido["numero"], f"📝 Tu pedido #{pedido_id} tiene una modificación: {modificacion}")
+    if tipo == "modificacion":
+        if "modificaciones" not in pedido:
+            pedido["modificaciones"] = []
+        pedido["modificaciones"].append(modificacion)
+        mensaje_cliente = f"📝 *Actualización en tu pedido #{pedido_id}:*\n{modificacion}"
+    elif tipo == "cambio":
+        if "cambios_platos" not in pedido:
+            pedido["cambios_platos"] = []
+        pedido["cambios_platos"].append(modificacion)
+        mensaje_cliente = f"🔄 *Cambio de plato en tu pedido #{pedido_id}:*\n{modificacion}"
+    elif tipo == "nota":
+        if "notas_admin" not in pedido:
+            pedido["notas_admin"] = []
+        pedido["notas_admin"].append(modificacion)
+        # Las notas del admin NO se envían al cliente
+        return {"ok": True, "pedido": pedido}
+
+    # Notificar al cliente (excepto notas)
+    enviar_whatsapp(pedido["numero"], mensaje_cliente)
 
     return {"ok": True, "pedido": pedido}
 
