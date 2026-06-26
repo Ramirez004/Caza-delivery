@@ -232,7 +232,7 @@ MENÚ:
 {chr(10).join(menu_activo)}
 {notas}{espera}
 
-Si el cliente pide ver "el menú", "la carta" o "el pdf", NO se lo describas tú: el sistema ya le envía automáticamente el PDF del menú antes de que tú respondas.
+Si el cliente pide ver "el menú" o "la carta", NO se lo describas tú: el sistema ya le envía automáticamente el menú completo antes de que tú respondas.
 
 INSTRUCCIONES CRÍTICAS PARA MANEJO DEL PEDIDO:
 - Habla amigable y natural como empleado real de {r['nombre']}.
@@ -297,30 +297,20 @@ def enviar_whatsapp(numero, mensaje):
     return r
 
 
-def enviar_documento_whatsapp(numero, url_documento, nombre_archivo, caption=""):
-    url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
-    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
-    documento = {"link": url_documento, "filename": nombre_archivo}
-    if caption:
-        documento["caption"] = caption
-    data = {"messaging_product": "whatsapp", "to": numero, "type": "document", "document": documento}
-    r = requests.post(url, headers=headers, json=data)
-    print("META (doc) →", r.status_code, r.text)
-    return r
-
-
-def enviar_menu_pdf(numero, rest_key):
+def enviar_menu_texto(numero, rest_key):
     r = RESTAURANTES[rest_key]
-    nombre_archivo = f"Menu-{r['nombre'].replace(' ', '-')}.pdf"
-    ruta_pdf = os.path.join(STATIC_DIR, f"menu_{rest_key}.pdf")
-    base_url = os.getenv("PANEL_URL", "").rstrip("/")
-    if not os.path.exists(ruta_pdf) or not base_url:
-        enviar_whatsapp(numero, "📋 Por ahora puedo contarte el menú aquí mismo, ¡pregúntame lo que quieras! 😊")
-        return False
-    url_pdf = f"{base_url}/static/menu_{rest_key}.pdf"
-    enviar_documento_whatsapp(numero, url_pdf, nombre_archivo, caption=f"📋 Menú completo de {r['nombre']}")
-    enviar_whatsapp(numero, f"📋 *Menú de {r['nombre']}:*\n{url_pdf}\n\n👉 Toca el link para verlo")
-    return True
+    lineas = [f"📋 *Menú de {r['nombre']}*\n"]
+    for cat, contenido in r["menu"].items():
+        if cat not in r["categorias_desactivadas"]:
+            lineas.append(contenido)
+    if r["notas"]:
+        lineas.append("\n📝 *Notas de hoy:*")
+        for nota in r["notas"]:
+            lineas.append(f"- {nota}")
+    dom = "Sí, costo $3.000" if r["domicilio_activo"] else "No disponible por ahora"
+    lineas.append(f"\n🛵 *Domicilio:* {dom}")
+    lineas.append("💳 *Pago:* Nequi, Daviplata, transferencia, efectivo")
+    enviar_whatsapp(numero, "\n\n".join(lineas))
 
 
 # ── COMANDOS ADMIN ────────────────────────────────────────────────────────────
@@ -883,9 +873,8 @@ async def recibir_mensaje(request: Request):
 
             # MENÚ PDF
             if any(p in texto_lower for p in ["pdf", "carta", "el menú", "el menu", "menú completo", "menu completo", "ver menú", "ver menu"]):
-                enviado = enviar_menu_pdf(numero, rest_key)
-                if enviado:
-                    enviar_whatsapp(numero, "¿Qué te gustaría pedir? 😊")
+                enviar_menu_texto(numero, rest_key)
+                enviar_whatsapp(numero, "¿Qué te gustaría pedir? 😊")
                 return {"status": "ok"}
 
             # ¿TIENE PEDIDO ACTIVO RECIENTE Y ESCRIBE ALGO AMBIGUO?
