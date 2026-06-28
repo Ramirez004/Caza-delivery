@@ -275,6 +275,8 @@ INSTRUCCIONES:
 - Si el cliente mencionó lugar de entrega, es domicilio. Confirma la dirección.
 - Cierra el pedido con: "Tu pedido ya está en camino 🛵" (domicilio) o "listo para recoger" (local).
 - No inventes productos ni precios.
+- Si el cliente pregunta por otros restaurantes, quiere cambiar de restaurante, o pide ver la lista de restaurantes, responde EXACTAMENTE: "Claro 😊 Escribe *restaurantes* para ver todos los restaurantes disponibles."
+- NO digas que solo eres asistente de este restaurante. El cliente puede cambiar cuando quiera.
 - Responde siempre en español. Sé conciso."""
 
 # ── ENVÍO WHATSAPP ────────────────────────────────────────────────────────────
@@ -756,7 +758,17 @@ async def recibir_mensaje(request: Request):
                 return {"status": "ok"}
 
         # ── PALABRAS CLAVE PARA VOLVER ────────────────────────────────────────
-        if texto_lower in ["inicio", "volver", "restaurantes", "cambiar", "menu", "menú", "cambiar restaurante", "otro restaurante"]:
+        palabras_cambio = ["inicio", "volver", "restaurantes", "cambiar", "cambiar restaurante", 
+                           "otro restaurante", "ver restaurantes", "lista restaurantes",
+                           "quiero otro restaurante", "otros restaurantes", "cuales restaurantes",
+                           "cuáles restaurantes", "que restaurantes", "qué restaurantes",
+                           "ver otros", "otros locales", "que hay", "qué hay"]
+        if texto_lower in palabras_cambio or any(p in texto_lower for p in [
+            "otro restaurante", "cambiar restaurante", "ver restaurantes", 
+            "cuales son los restaurantes", "cuáles son los restaurantes",
+            "que restaurantes hay", "qué restaurantes hay", "otros restaurantes",
+            "quiero ir a otro", "cambiar de restaurante", "ver otros restaurantes"
+        ]):
             cliente_restaurante.pop(numero, None)
             historial.pop(numero, None)
             clientes_eligiendo[numero] = True
