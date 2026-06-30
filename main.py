@@ -273,7 +273,7 @@ INSTRUCCIONES:
 - NUNCA muestres resumen ni total hasta que el cliente diga "es todo", "listo", "eso sería" o similar.
 - Solo entonces muestra resumen completo con total.
 - Si el cliente mencionó lugar de entrega, es domicilio. Confirma la dirección.
-- Cierra el pedido con: "Tu pedido ya está en camino 🛵" (domicilio) o "listo para recoger" (local).
+- Al confirmar el pedido di EXACTAMENTE: "✅ *Pedido recibido* Estamos preparando tu pedido y pronto te avisamos 🍔" — NO digas "en camino" ni "listo para recoger" porque eso lo decide el restaurante.
 - No inventes productos ni precios.
 - Si el cliente pregunta por otros restaurantes, quiere cambiar de restaurante, o pide ver la lista de restaurantes, responde EXACTAMENTE: "Claro 😊 Escribe *restaurantes* para ver todos los restaurantes disponibles."
 - NO digas que solo eres asistente de este restaurante. El cliente puede cambiar cuando quiera.
@@ -325,6 +325,53 @@ def notificar_pedido_admin(numero, pedido, es_nuevo=True):
         f"👉 {os.getenv('PANEL_URL', '')}/panel"
     )
     enviar_whatsapp(ADMIN_NUMBER, msg)
+
+# ── DOMICILIARIOS ────────────────────────────────────────────────────────────
+
+def get_domiciliarios_disponibles():
+    try:
+        res = supabase.table("domiciliarios").select("*").eq("activo", True).eq("disponible", True).execute()
+        return res.data or []
+    except Exception:
+        traceback.print_exc()
+        return []
+
+def get_domiciliario_by_nombre(nombre):
+    try:
+        res = supabase.table("domiciliarios").select("*").eq("nombre", nombre).execute()
+        return res.data[0] if res.data else None
+    except Exception:
+        return None
+
+def pedido_ya_asignado(pedido_id):
+    try:
+        res = supabase.table("asignaciones").select("*").eq("pedido_id", pedido_id).execute()
+        return len(res.data) > 0
+    except Exception:
+        return False
+
+# Pedidos pendientes de asignacion (en memoria, se limpia al asignar)
+_pedidos_pendientes = {}  # pedido_id -> pedido dict
+
+def agregar_pedido_pendiente(pedido):
+    _pedidos_pendientes[pedido["id"]] = pedido
+
+def notificar_domiciliarios_whatsapp(pedido):
+    """Notifica a domiciliarios disponibles por WhatsApp como respaldo"""
+    doms = get_domiciliarios_disponibles()
+    for dom in doms:
+        msg = (
+            f"🛵 *¡Pedido nuevo #{pedido['id']}!*\n"
+            f"🍽️ {pedido.get('restaurante_nombre', '')}\n"
+            f"📍 {pedido.get('direccion', '')}\n"
+            f"────────────────\n"
+            f"{pedido.get('resumen', '')}\n"
+            f"────────────────\n"
+            f"💰 Ganancia: $5.000\n\n"
+            f"👉 Abre la app para aceptar:\n"
+            f"{os.getenv('PANEL_URL', '')}/domiciliarios"
+        )
+        enviar_whatsapp(dom["telefono"], msg)
 
 # ── COMANDOS ADMIN ────────────────────────────────────────────────────────────
 
@@ -508,7 +555,7 @@ h1{font-size:1.3rem;color:#222}h1 span{display:block;font-size:.75rem;font-weigh
 .mods{background:#FFF6E0;border-left:3px solid #FF9800;padding:7px;border-radius:6px;margin:6px 0;font-size:.73rem}
 .quejas-box{background:#FDECEA;border-left:3px solid #f44336;padding:7px;border-radius:6px;margin:6px 0;font-size:.73rem}
 .est-lbl{text-align:center;font-size:.78rem;font-weight:700;padding:4px;border-radius:4px;margin:8px 0 5px}
-.est-lbl.activo{color:#2E7D32}.est-lbl.preparando{color:#E65100}.est-lbl.enviado{color:#1565C0}.est-lbl.entregado{color:#6A1B9A}.est-lbl.cancelado{color:#C62828}
+.est-lbl.activo{color:#2E7D32}.est-lbl.preparando{color:#1565C0}.est-lbl.enviado{color:#1565C0}.est-lbl.entregado{color:#6A1B9A}.est-lbl.cancelado{color:#C62828}
 .ebts{display:grid;grid-template-columns:repeat(5,1fr);gap:4px}
 .eb{padding:8px 0;border:none;border-radius:6px;cursor:pointer;font-size:.95rem;background:#f5f5f0;color:#aaa;opacity:.65;transition:all .15s}
 .eb:hover{opacity:1}.eb.on{opacity:1}
@@ -538,7 +585,7 @@ h1{font-size:1.3rem;color:#222}h1 span{display:block;font-size:.75rem;font-weigh
 </div>
 <div class="tabs">
   <button class="tab on" data-tab="todos" onclick="cambiarTab('todos')">📋 Todos <span id="c-todos"></span></button>
-  <button class="tab" data-tab="preparacion" onclick="cambiarTab('preparacion')">🍳 Preparando <span id="c-prep"></span></button>
+  <button class="tab" data-tab="preparacion" onclick="cambiarTab('preparacion')">📥 Recibidos <span id="c-prep"></span></button>
   <button class="tab" data-tab="enviados" onclick="cambiarTab('enviados')">🛵 Enviados <span id="c-env"></span></button>
   <button class="tab" data-tab="entregados" onclick="cambiarTab('entregados')">✅ Entregados <span id="c-ent"></span></button>
 </div>
@@ -598,9 +645,9 @@ function cambiarTab(tab){
   document.querySelector(`.tab[data-tab="${tab}"]`).classList.add('on');
   render();
 }
-const EST_MAP={activo:'🆕 Activo',preparando:'🍳 Preparando',enviado:'🛵 Enviado',entregado:'✅ Entregado',cancelado:'❌ Cancelado'};
+const EST_MAP={activo:'🆕 Activo',preparando:'📥 Pedido Recibido',enviado:'🛵 Enviado',entregado:'✅ Entregado',cancelado:'❌ Cancelado'};
 const BTNS=[
-  {k:'activo',i:'🆕',c:'eb-activo'},{k:'preparando',i:'🍳',c:'eb-preparando'},
+  {k:'activo',i:'🆕',c:'eb-activo'},{k:'preparando',i:'📥',c:'eb-preparando'},
   {k:'enviado',i:'🛵',c:'eb-enviado'},{k:'entregado',i:'✅',c:'eb-entregado'},{k:'cancelado',i:'❌',c:'eb-cancelado'}
 ];
 function render(){
@@ -671,6 +718,14 @@ async def cambiar_estado(pedido_id: str, request: Request):
     actualizar_estado_pedido(pedido_id, nuevo)
     numero = pedido["numero_cliente"]
     nombre_rest = pedido.get("restaurante_nombre", "")
+
+    # Cuando el restaurante marca "Pedido Recibido" y es domicilio,
+    # se ofrece automáticamente a los domiciliarios disponibles
+    if nuevo == "preparando" and anterior != "preparando" and pedido.get("tipo") == "domicilio":
+        pedido_actualizado = get_pedido_by_id(pedido_id)
+        agregar_pedido_pendiente(pedido_actualizado)
+        notificar_domiciliarios_whatsapp(pedido_actualizado)
+
     if nuevo == "enviado" and anterior != "enviado":
         msg = (f"🛵 *¡Tu pedido va en camino!*\n#{pedido_id} hacia {pedido['direccion']}.\n¡Gracias por pedir en {nombre_rest}! 🍔"
                if pedido["tipo"] == "domicilio"
@@ -681,6 +736,123 @@ async def cambiar_estado(pedido_id: str, request: Request):
     if nuevo == "cancelado" and anterior != "cancelado":
         enviar_whatsapp(numero, f"❌ *Pedido #{pedido_id} cancelado.*\nSi tienes dudas contáctanos. ¡Hasta pronto! 🍔")
     return {"ok": True}
+
+# ── RUTAS DOMICILIARIOS ──────────────────────────────────────────────────────
+
+@app.get("/domiciliarios")
+async def domiciliarios_app():
+    with open(os.path.join(STATIC_DIR, "domiciliarios.html"), "r") as f:
+        return HTMLResponse(f.read())
+
+@app.get("/api/domiciliario/pedidos-pendientes")
+async def pedidos_pendientes(nombre: str = ""):
+    dom = get_domiciliario_by_nombre(nombre)
+    if not dom or not dom.get("disponible"):
+        return {"pedido": None, "stats": {}}
+    # Buscar pedido pendiente no asignado
+    pedido_para_dom = None
+    for pid, pedido in list(_pedidos_pendientes.items()):
+        if not pedido_ya_asignado(pid):
+            pedido_para_dom = pedido
+            break
+    # Stats del día
+    try:
+        from datetime import date
+        hoy = date.today().isoformat()
+        res = supabase.table("asignaciones").select("*")            .eq("domiciliario_id", dom["id"])            .gte("fecha", hoy).execute()
+        pedidos_hoy = len(res.data or [])
+    except Exception:
+        pedidos_hoy = 0
+    return {"pedido": pedido_para_dom, "stats": {"pedidos_hoy": pedidos_hoy}}
+
+@app.post("/api/domiciliario/aceptar")
+async def aceptar_pedido_dom(request: Request):
+    body = await request.json()
+    nombre = body.get("nombre", "")
+    pedido_id = body.get("pedido_id", "")
+    dom = get_domiciliario_by_nombre(nombre)
+    if not dom:
+        return {"ok": False, "msg": "Domiciliario no encontrado"}
+    if pedido_ya_asignado(pedido_id):
+        return {"ok": False, "msg": "Este pedido ya fue tomado por otro domiciliario"}
+    try:
+        supabase.table("asignaciones").insert({
+            "pedido_id": pedido_id,
+            "domiciliario_id": dom["id"],
+            "estado": "aceptado"
+        }).execute()
+        # Quitar de pendientes
+        _pedidos_pendientes.pop(pedido_id, None)
+        # Actualizar estado pedido
+        actualizar_estado_pedido(pedido_id, "preparando")
+        # Notificar al admin
+        enviar_whatsapp(ADMIN_NUMBER,
+            f"✅ *Pedido #{pedido_id} aceptado*\n"
+            f"🛵 Domiciliario: *{nombre}*\n"
+            f"👉 {os.getenv('PANEL_URL', '')}/panel")
+        # Notificar al cliente
+        pedido = get_pedido_by_id(pedido_id)
+        if pedido:
+            enviar_whatsapp(pedido["numero_cliente"],
+                f"🛵 *¡Tu pedido #{pedido_id} fue aceptado!*\n"
+                f"*{nombre}* está en camino con tu pedido.\n"
+                f"¡Prepárate para recibirlo! 🍔")
+        return {"ok": True}
+    except Exception:
+        traceback.print_exc()
+        return {"ok": False, "msg": "Error al asignar"}
+
+@app.post("/api/domiciliario/entregado")
+async def marcar_entregado_dom(request: Request):
+    body = await request.json()
+    pedido_id = body.get("pedido_id", "")
+    nombre = body.get("nombre", "")
+    actualizar_estado_pedido(pedido_id, "entregado")
+    pedido = get_pedido_by_id(pedido_id)
+    if pedido:
+        enviar_whatsapp(pedido["numero_cliente"],
+            f"🙌 *¡Pedido #{pedido_id} entregado!*\n"
+            f"Esperamos que lo disfrutes 😊\n"
+            f"¡Gracias por pedir en Ipiales Delivery!")
+        enviar_whatsapp(ADMIN_NUMBER,
+            f"✅ *Pedido #{pedido_id} entregado*\n🛵 Por: {nombre}")
+    # Actualizar contador domiciliario
+    dom = get_domiciliario_by_nombre(nombre)
+    if dom:
+        supabase.table("domiciliarios").update({
+            "pedidos_completados": (dom.get("pedidos_completados") or 0) + 1
+        }).eq("id", dom["id"]).execute()
+    return {"ok": True}
+
+@app.post("/api/domiciliario/disponibilidad")
+async def cambiar_disponibilidad(request: Request):
+    body = await request.json()
+    nombre = body.get("nombre", "")
+    disponible = body.get("disponible", True)
+    supabase.table("domiciliarios").update({"disponible": disponible}).eq("nombre", nombre).execute()
+    return {"ok": True}
+
+@app.get("/api/domiciliario/mis-pedidos")
+async def mis_pedidos_dom(nombre: str = ""):
+    dom = get_domiciliario_by_nombre(nombre)
+    if not dom:
+        return {"pedidos": [], "stats": {}}
+    try:
+        # Pedidos asignados a este domiciliario que están en estado enviado/preparando
+        res = supabase.table("asignaciones").select("pedido_id")            .eq("domiciliario_id", dom["id"]).execute()
+        ids = [a["pedido_id"] for a in (res.data or [])]
+        pedidos = []
+        for pid in ids:
+            p = get_pedido_by_id(pid)
+            if p and p["estado"] in ["preparando", "enviado"]:
+                pedidos.append(p)
+        from datetime import date
+        hoy = date.today().isoformat()
+        res_hoy = supabase.table("asignaciones").select("*")            .eq("domiciliario_id", dom["id"]).gte("fecha", hoy).execute()
+        return {"pedidos": pedidos, "stats": {"pedidos_hoy": len(res_hoy.data or [])}}
+    except Exception:
+        traceback.print_exc()
+        return {"pedidos": [], "stats": {}}
 
 @app.get("/webhook")
 async def verificar_webhook(request: Request):
@@ -971,11 +1143,10 @@ async def recibir_mensaje(request: Request):
         enviar_whatsapp(numero, texto_respuesta)
 
         # Detectar cierre de pedido
-        palabras_cierre = ["en camino", "listo para recoger", "pasamos a preparar", "empezamos a preparar"]
-        tiene_contexto  = any(p in texto_respuesta.lower() for p in ["domicilio", "recoger", "local"])
-        es_cierre       = any(p in texto_respuesta.lower() for p in palabras_cierre)
+        palabras_cierre = ["pedido recibido", "en camino", "listo para recoger", "pasamos a preparar", "empezamos a preparar", "estamos preparando"]
+        es_cierre = any(p in texto_respuesta.lower() for p in palabras_cierre)
 
-        if es_cierre and tiene_contexto:
+        if es_cierre:
             resumen = texto_respuesta
             for msg in reversed(historial[numero]):
                 if msg["role"] == "assistant" and "total" in msg["content"].lower() and "$" in msg["content"]:
@@ -983,10 +1154,6 @@ async def recibir_mensaje(request: Request):
                     break
             pedido, es_nuevo = crear_pedido(numero, resumen, texto_respuesta, rest_key)
             notificar_pedido_admin(numero, pedido, es_nuevo)
-
-            # Si tiene dirección guardada en perfil y no la tiene en el pedido, actualizar
-            if cliente and cliente.get("direccion") and pedido.get("direccion") in ["Ver resumen", ""]:
-                actualizar_estado_pedido(pedido["id"], "activo")
 
     except Exception:
         traceback.print_exc()
