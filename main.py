@@ -744,6 +744,34 @@ async def domiciliarios_app():
     with open(os.path.join(STATIC_DIR, "domiciliarios.html"), "r") as f:
         return HTMLResponse(f.read())
 
+@app.post("/api/domiciliario/login")
+async def login_domiciliario(request: Request):
+    body = await request.json()
+    nombre = body.get("nombre", "")
+    pin = body.get("pin", "")
+    dom = get_domiciliario_by_nombre(nombre)
+    if not dom:
+        return {"ok": False, "msg": "Domiciliario no encontrado"}
+    if str(dom.get("pin", "")) != str(pin):
+        return {"ok": False, "msg": "PIN incorrecto"}
+    return {"ok": True}
+
+@app.post("/api/domiciliario/cambiar-pin")
+async def cambiar_pin_domiciliario(request: Request):
+    body = await request.json()
+    nombre = body.get("nombre", "")
+    pin_actual = body.get("pin_actual", "")
+    pin_nuevo = body.get("pin_nuevo", "")
+    dom = get_domiciliario_by_nombre(nombre)
+    if not dom:
+        return {"ok": False, "msg": "Domiciliario no encontrado"}
+    if str(dom.get("pin", "")) != str(pin_actual):
+        return {"ok": False, "msg": "PIN actual incorrecto"}
+    if not pin_nuevo.isdigit() or len(pin_nuevo) != 6:
+        return {"ok": False, "msg": "El nuevo PIN debe tener 6 dígitos"}
+    supabase.table("domiciliarios").update({"pin": pin_nuevo}).eq("nombre", nombre).execute()
+    return {"ok": True}
+
 @app.get("/api/domiciliario/pedidos-pendientes")
 async def pedidos_pendientes(nombre: str = ""):
     dom = get_domiciliario_by_nombre(nombre)
