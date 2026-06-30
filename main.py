@@ -403,6 +403,55 @@ def get_domiciliario_by_nombre(nombre):
     except Exception:
         return None
 
+def get_domiciliario_by_telefono(telefono):
+    try:
+        res = supabase.table("domiciliarios").select("*").eq("telefono", telefono).execute()
+        return res.data[0] if res.data else None
+    except Exception:
+        return None
+
+def set_disponible_domiciliario(telefono, disponible):
+    try:
+        supabase.table("domiciliarios").update({"disponible": disponible}).eq("telefono", telefono).execute()
+    except Exception:
+        traceback.print_exc()
+
+def procesar_mensaje_domiciliario(numero, texto):
+    """Maneja mensajes de domiciliarios (entro turno / salgo turno).
+    Retorna respuesta si el número es de un domiciliario, None si no."""
+    dom = get_domiciliario_by_telefono(numero)
+    if not dom:
+        return None
+
+    t = texto.strip().lower()
+
+    if any(p in t for p in ["entro turno", "entro al turno", "inicio turno", "empiezo turno", "estoy disponible", "ya estoy"]):
+        set_disponible_domiciliario(numero, True)
+        return (
+            f"✅ *¡Listo {dom['nombre']}!* Estás en turno.\n\n"
+            f"Te avisaremos cuando haya un pedido disponible. 🛵\n\n"
+            f"Escribe *salgo turno* cuando termines."
+        )
+
+    if any(p in t for p in ["salgo turno", "salgo del turno", "termino turno", "fin turno", "ya no estoy", "me voy"]):
+        set_disponible_domiciliario(numero, False)
+        return f"👋 *Hasta luego {dom['nombre']}!* Quedas fuera de turno.\n\nEscribe *entro turno* cuando vuelvas a estar disponible."
+
+    if any(p in t for p in ["ayuda", "help", "comandos"]):
+        return (
+            f"🛵 *Comandos disponibles {dom['nombre']}:*\n\n"
+            f"• *entro turno* → activarte para recibir pedidos\n"
+            f"• *salgo turno* → desactivarte\n\n"
+            f"Estado actual: {'✅ En turno' if dom.get('disponible') else '❌ Fuera de turno'}"
+        )
+
+    # Si es domiciliario pero no es un comando conocido,
+    # responde brevemente sin pasar por Claude
+    if dom.get("disponible"):
+        return f"Hola {dom['nombre']} 😊 Estás en turno. Escribe *salgo turno* si quieres desactivarte."
+    else:
+        return f"Hola {dom['nombre']} 😊 Estás fuera de turno. Escribe *entro turno* para activarte."
+
 def pedido_ya_asignado(pedido_id):
     try:
         res = supabase.table("asignaciones").select("*").eq("pedido_id", pedido_id).execute()
@@ -1080,6 +1129,12 @@ async def recibir_mensaje(request: Request):
         texto   = mensaje["text"]["body"]
         texto_lower = texto.strip().lower()
         print(f"De {numero}: {texto}")
+
+        # ── DOMICILIARIO ──
+        resp_dom = procesar_mensaje_domiciliario(numero, texto)
+        if resp_dom:
+            enviar_whatsapp(numero, resp_dom)
+            return {"status": "ok"}
 
         # ── ADMIN ──
         if numero == ADMIN_NUMBER:
