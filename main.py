@@ -1069,9 +1069,31 @@ async def recibir_mensaje(request: Request):
         if numero in clientes_registrando:
             paso = clientes_registrando[numero]["paso"]
             if paso == "nombre":
-                clientes_registrando[numero]["nombre"] = texto.strip()
+                nombre_candidato = texto.strip()
+                # Validar que sea un nombre real:
+                # - máx 30 caracteres
+                # - no contiene números
+                # - no tiene más de 3 palabras
+                # - no parece un saludo o pedido
+                palabras_no_nombre = ["hola", "buenas", "quiero", "pedir", "dame", "salchipapa",
+                                       "hamburguesa", "pizza", "pedido", "domicilio", "menu", "menú"]
+                es_nombre_valido = (
+                    len(nombre_candidato) <= 30 and
+                    len(nombre_candidato.split()) <= 3 and
+                    not any(p in nombre_candidato.lower() for p in palabras_no_nombre) and
+                    not any(c.isdigit() for c in nombre_candidato)
+                )
+                if not es_nombre_valido:
+                    enviar_whatsapp(numero,
+                        "Necesito tu nombre para registrarte 😊\n"
+                        "Por favor escribe solo tu nombre (ej: *Juan* o *Maria Lopez*)")
+                    return {"status": "ok"}
+                clientes_registrando[numero]["nombre"] = nombre_candidato
                 clientes_registrando[numero]["paso"] = "direccion"
-                enviar_whatsapp(numero, f"¡Perfecto {texto.strip()}! 😊 ¿Cuál es tu dirección habitual para domicilios?\n_(Si no tienes una fija escribe *no tengo*)_")
+                enviar_whatsapp(numero,
+                    f"¡Perfecto {nombre_candidato}! 😊\n\n"
+                    f"¿Cuál es tu dirección habitual para domicilios?\n"
+                    f"_(Escribe la dirección completa o *no tengo* si no tienes una fija)_")
                 return {"status": "ok"}
             elif paso == "direccion":
                 nombre = clientes_registrando[numero]["nombre"]
@@ -1318,7 +1340,13 @@ async def recibir_mensaje(request: Request):
                 if msg["role"] == "assistant" and "total" in msg["content"].lower() and "$" in msg["content"]:
                     resumen = msg["content"]
                     break
-            pedido, es_nuevo = crear_pedido(numero, resumen, texto_respuesta, rest_key)
+            # Construir texto completo de la conversación para extracción estructurada
+            conversacion_txt = "\n".join(
+                f"{'Cliente' if m['role'] == 'user' else 'Bot'}: {m['content']}"
+                for m in historial[numero][-20:]
+            )
+            datos = extraer_pedido_estructurado(conversacion_txt, rest_key)
+            pedido, es_nuevo = crear_pedido(numero, resumen, texto_respuesta, rest_key, datos)
             notificar_pedido_admin(numero, pedido, es_nuevo)
 
     except Exception:
