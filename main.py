@@ -762,7 +762,11 @@ function render(){
   const lista=filtrar(tabActual);
   if(!lista.length){g.innerHTML='';e.style.display='block';return;}
   e.style.display='none';
-  g.innerHTML=lista.map(p=>`
+  const orden = ['activo','preparando','enviado','entregado'];
+  g.innerHTML=lista.map(p=>{
+    const esFinal = p.estado==='entregado'||p.estado==='cancelado';
+    const idxActual = orden.indexOf(p.estado);
+    return `
     <div class="card">
       <div class="pid">#${p.id}</div>
       <div class="rest-tag">🍽️ ${p.restaurante_nombre||'—'}</div>
@@ -775,9 +779,17 @@ function render(){
       ${p.modificaciones&&p.modificaciones.length?`<div class="mods"><strong>📝 Modificaciones:</strong><br>${p.modificaciones.join('<br>')}</div>`:''}
       ${p.quejas&&p.quejas.length?`<div class="quejas-box"><strong>⚠️ Quejas:</strong><br>${p.quejas.join('<br>')}</div>`:''}
       <div class="est-lbl ${p.estado}">${EST_MAP[p.estado]||p.estado}</div>
-      ${htmlBotonDom(p)}
-      <div class="ebts">${BTNS.map(b=>`<button class="eb ${b.c} ${p.estado===b.k?'on':''}" title="${b.k}" onclick="cambiarEstado('${p.id}','${b.k}')">${b.i}</button>`).join('')}</div>
-    </div>`).join('');
+      ${!esFinal ? htmlBotonDom(p) : ''}
+      <div class="ebts">${BTNS.map(b=>{
+        const idxBtn = orden.indexOf(b.k);
+        const bloqueado = esFinal || (idxBtn < idxActual && b.k !== 'cancelado');
+        return `<button class="eb ${b.c} ${p.estado===b.k?'on':''}"
+          title="${b.k}"
+          ${bloqueado ? 'disabled style="opacity:.25;cursor:not-allowed"' : ''}
+          onclick="${bloqueado?'':''} cambiarEstado('${p.id}','${b.k}')">${b.i}</button>`;
+      }).join('')}</div>
+    </div>`;
+  }).join('');
 }
 async function cambiarEstado(id,estado){
   await fetch(`/api/pedidos/${id}/estado`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pw,estado})});
@@ -822,6 +834,17 @@ async def cambiar_estado(pedido_id: str, request: Request):
     if not pedido:
         raise HTTPException(status_code=404)
     anterior = pedido["estado"]
+
+    # Bloquear cambios desde estados finales
+    if anterior in ["entregado", "cancelado"]:
+        return {"ok": False, "msg": f"Este pedido ya fue {anterior} y no se puede modificar."}
+
+    # Bloquear retrocesos de estado
+    orden = ["activo", "preparando", "enviado", "entregado"]
+    if nuevo in orden and anterior in orden:
+        if orden.index(nuevo) < orden.index(anterior):
+            return {"ok": False, "msg": f"No se puede volver de '{anterior}' a '{nuevo}'."}
+
     actualizar_estado_pedido(pedido_id, nuevo)
     numero = pedido["numero_cliente"]
     nombre_rest = pedido.get("restaurante_nombre", "")
