@@ -346,6 +346,15 @@ function abrirModalRestaurante(r) {
     <div class="form-group"><label>Hora apertura (0-23)</label><input id="f-hi" type="number" min="0" max="23" value="${r?.hora_inicio??12}"></div>
     <div class="form-group"><label>Hora cierre (0-23)</label><input id="f-hf" type="number" min="0" max="23" value="${r?.hora_fin??23}"></div>
     <div class="form-group"><label>Contraseña del panel del restaurante (opcional)</label><input id="f-pw-panel" value="${r?.panel_password||""}" placeholder="Deja vacío para no darle panel propio"></div>
+    ${(esEditar && r?.panel_password) ? `
+    <div class="form-group">
+      <label>Link del panel de este restaurante</label>
+      <div style="display:flex;gap:6px">
+        <input id="f-link-panel" value="${window.location.origin}/panel-restaurante" readonly style="color:var(--text2)">
+        <button type="button" class="btn btn-ghost btn-sm" onclick="copiarLinkPanel()">📋 Copiar</button>
+      </div>
+      <p style="font-size:.72rem;color:var(--text2);margin-top:6px">Comparte este link junto con la contraseña de arriba — el restaurante entra con esa contraseña.</p>
+    </div>` : ""}
     <div class="form-group">
       <label>Cómo enviar el menú cuando el cliente lo pida</label>
       <select id="f-menu-modo">
@@ -562,6 +571,15 @@ function cerrarModal() { document.getElementById("modal-overlay").style.display 
 async function cerrarSesion() {
   await fetch("/admin/logout", { method: "POST" });
   window.location.href = "/admin";
+}
+
+function copiarLinkPanel() {
+  const input = document.getElementById("f-link-panel");
+  input.select();
+  navigator.clipboard.writeText(input.value).then(
+    () => toast("✅ Link copiado", "success"),
+    () => toast("No se pudo copiar, cópialo manualmente", "error")
+  );
 }
 
 // Init
