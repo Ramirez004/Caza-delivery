@@ -82,7 +82,33 @@ tr:hover td{background:var(--surface2)}
 .toast.success{background:#1b3a1b;border:1px solid var(--green);color:var(--green)}
 .toast.error{background:#3a1b1b;border:1px solid var(--red);color:var(--red)}
 /* RESPONSIVE */
-@media(max-width:768px){.sidebar{display:none}.main{margin-left:0}}
+@media(max-width:768px){
+  .layout{flex-direction:column}
+  .sidebar{
+    position:static;
+    width:100%;
+    height:auto;
+    flex-direction:row;
+    align-items:center;
+    padding:8px;
+    overflow-x:auto;
+    -webkit-overflow-scrolling:touch;
+  }
+  .sidebar-logo{display:none}
+  .sidebar nav{display:flex;flex-direction:row;gap:4px}
+  .nav-item{
+    flex-direction:column;
+    gap:2px;
+    padding:8px 12px;
+    border-left:none;
+    border-bottom:3px solid transparent;
+    white-space:nowrap;
+    font-size:.72rem;
+  }
+  .nav-item.active{border-left-color:transparent;border-bottom-color:var(--accent)}
+  .sidebar>div:last-child{margin-top:0!important;margin-left:auto;white-space:nowrap}
+  .main{margin-left:0}
+}
 </style>
 </head>
 <body>
