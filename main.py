@@ -840,6 +840,28 @@ button{width:100%;padding:12px;background:linear-gradient(135deg,#FFC107,#F57C00
 <script>function entrar(e){e.preventDefault();window.location.href='/panel?pw='+encodeURIComponent(document.getElementById('pw').value);}</script>
 </body></html>"""
 
+LOGIN_RESTAURANTE_HTML = """<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Panel del restaurante — Ipiales Delivery</title>
+<style>
+*{box-sizing:border-box}body{background:#FFF8E7;font-family:'Segoe UI',sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;color:#222}
+.box{background:#fff;border:1px solid #FFE2A8;box-shadow:0 8px 28px rgba(0,0,0,.08);padding:32px 28px;border-radius:16px;text-align:center;width:90%;max-width:340px}
+h1{font-size:1.3rem;margin-bottom:4px}h1 span{color:#F57C00}p{color:#9a8a6b;margin-bottom:20px;font-size:.87rem}
+input{width:100%;padding:12px;background:#FFFBF2;border:1px solid #FFE2A8;border-radius:10px;font-size:1rem;outline:none;margin-bottom:12px}
+input:focus{border-color:#FFC107;box-shadow:0 0 0 3px rgba(255,193,7,.18)}
+button{width:100%;padding:12px;background:linear-gradient(135deg,#FFC107,#F57C00);border:none;border-radius:10px;color:#1a1a1a;font-weight:700;font-size:1rem;cursor:pointer}
+</style></head><body>
+<div class="box">
+  <h1>🍽️ Panel de <span>tu restaurante</span></h1>
+  <p>Ipiales Delivery</p>
+  <form onsubmit="entrar(event)">
+    <input type="password" id="pw" placeholder="Contraseña de tu restaurante" autofocus>
+    <button type="submit">Entrar</button>
+  </form>
+</div>
+<script>function entrar(e){e.preventDefault();window.location.href='/panel-restaurante?pw='+encodeURIComponent(document.getElementById('pw').value);}</script>
+</body></html>"""
+
 PANEL_HTML = """<!DOCTYPE html>
 <html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Panel — Ipiales Delivery</title>
@@ -1086,17 +1108,11 @@ async def api_pedidos(pw: str = ""):
         p["cliente_nombre"] = cli["nombre"] if cli else ""
     return {"pedidos": todos}
 
-@app.post("/api/pedidos/{pedido_id}/estado")
-async def cambiar_estado(pedido_id: str, request: Request):
-    body = await request.json()
-    if body.get("pw") != PANEL_PASSWORD:
-        raise HTTPException(status_code=403)
-    nuevo = body.get("estado", "")
-    if nuevo not in ["activo", "preparando", "enviado", "entregado", "cancelado"]:
-        raise HTTPException(status_code=400)
-    pedido = get_pedido_by_id(pedido_id)
-    if not pedido:
-        raise HTTPException(status_code=404)
+def _aplicar_cambio_estado_pedido(pedido, nuevo):
+    """Valida la transición y aplica el cambio de estado de un pedido ya cargado,
+    notificando al cliente por WhatsApp. Reutilizada por el panel general y por
+    el panel propio de cada restaurante."""
+    pedido_id = pedido["id"]
     anterior = pedido["estado"]
 
     # Bloquear cambios desde estados finales
@@ -1126,14 +1142,10 @@ async def cambiar_estado(pedido_id: str, request: Request):
         enviar_whatsapp(numero, f"❌ *Pedido #{pedido_id} cancelado.*\nSi tienes dudas contáctanos. ¡Hasta pronto! 🍔")
     return {"ok": True}
 
-@app.post("/api/pedidos/{pedido_id}/buscar-domiciliario")
-async def buscar_domiciliario(pedido_id: str, request: Request):
-    body = await request.json()
-    if body.get("pw") != PANEL_PASSWORD:
-        raise HTTPException(status_code=403)
-    pedido = get_pedido_by_id(pedido_id)
-    if not pedido:
-        raise HTTPException(status_code=404)
+def _iniciar_busqueda_domiciliario(pedido):
+    """Notifica a los domiciliarios disponibles para que acepten este pedido.
+    Reutilizada por el panel general y por el panel propio de cada restaurante."""
+    pedido_id = pedido["id"]
     if pedido.get("tipo") != "domicilio":
         return {"ok": False, "msg": "Este pedido no es de domicilio"}
     if pedido_ya_asignado(pedido_id):
@@ -1146,10 +1158,31 @@ async def buscar_domiciliario(pedido_id: str, request: Request):
     notificar_domiciliarios_whatsapp(pedido)
     return {"ok": True, "msg": f"Buscando entre {len(doms)} domiciliario(s) disponible(s)"}
 
-@app.get("/api/pedidos/{pedido_id}/estado-domiciliario")
-async def estado_domiciliario(pedido_id: str, pw: str = ""):
-    if pw != PANEL_PASSWORD:
+@app.post("/api/pedidos/{pedido_id}/estado")
+async def cambiar_estado(pedido_id: str, request: Request):
+    body = await request.json()
+    if body.get("pw") != PANEL_PASSWORD:
         raise HTTPException(status_code=403)
+    nuevo = body.get("estado", "")
+    if nuevo not in ["activo", "preparando", "enviado", "entregado", "cancelado"]:
+        raise HTTPException(status_code=400)
+    pedido = get_pedido_by_id(pedido_id)
+    if not pedido:
+        raise HTTPException(status_code=404)
+    return _aplicar_cambio_estado_pedido(pedido, nuevo)
+
+@app.post("/api/pedidos/{pedido_id}/buscar-domiciliario")
+async def buscar_domiciliario(pedido_id: str, request: Request):
+    body = await request.json()
+    if body.get("pw") != PANEL_PASSWORD:
+        raise HTTPException(status_code=403)
+    pedido = get_pedido_by_id(pedido_id)
+    if not pedido:
+        raise HTTPException(status_code=404)
+    return _iniciar_busqueda_domiciliario(pedido)
+
+def _obtener_estado_domiciliario_pedido(pedido_id):
+    """Reutilizada por el panel general y por el panel propio de cada restaurante."""
     asignado = pedido_ya_asignado(pedido_id)
     nombre = None
     if asignado:
@@ -1163,6 +1196,91 @@ async def estado_domiciliario(pedido_id: str, pw: str = ""):
             pass
     buscando = pedido_id in _pedidos_pendientes
     return {"asignado": asignado, "nombre": nombre, "buscando": buscando}
+
+@app.get("/api/pedidos/{pedido_id}/estado-domiciliario")
+async def estado_domiciliario(pedido_id: str, pw: str = ""):
+    if pw != PANEL_PASSWORD:
+        raise HTTPException(status_code=403)
+    return _obtener_estado_domiciliario_pedido(pedido_id)
+
+# ── PANEL PROPIO POR RESTAURANTE ──────────────────────────────────────────────
+
+@app.get("/panel-restaurante")
+async def panel_restaurante_route(pw: str = ""):
+    rest_key = get_restaurante_key_por_password(pw)
+    if rest_key:
+        r = _cache_restaurantes[rest_key]
+        with open(os.path.join(STATIC_DIR, "panel_restaurante.html"), "r", encoding="utf-8") as f:
+            html = f.read()
+        return HTMLResponse(html.replace("{{PW}}", pw).replace("{{NOMBRE_RESTAURANTE}}", r["nombre"]))
+    return HTMLResponse(LOGIN_RESTAURANTE_HTML)
+
+@app.get("/api/restaurante-panel/pedidos")
+async def api_restaurante_panel_pedidos(pw: str = ""):
+    rest_key = get_restaurante_key_por_password(pw)
+    if not rest_key:
+        raise HTTPException(status_code=403)
+    todos = get_todos_pedidos()
+    propios = [p for p in todos if p.get("restaurante_id") == rest_key]
+    for p in propios:
+        cli = get_cliente(p.get("numero_cliente", ""))
+        p["cliente_nombre"] = cli["nombre"] if cli else ""
+        if p.get("tipo") == "domicilio" and p.get("estado") not in ["entregado", "cancelado"]:
+            p["estado_domiciliario"] = _obtener_estado_domiciliario_pedido(p["id"])
+    extra = _estado_extra[rest_key]
+    estado = {
+        "domicilio_activo": extra.get("domicilio_activo", True),
+        "tiempo_espera": extra.get("tiempo_espera"),
+        "notas": extra.get("notas", []),
+        "abierto_forzado": extra.get("abierto_forzado", False),
+        "abierto_ahora": esta_abierto(rest_key),
+    }
+    return {"pedidos": propios, "estado": estado}
+
+@app.post("/api/restaurante-panel/pedidos/{pedido_id}/estado")
+async def api_restaurante_panel_cambiar_estado(pedido_id: str, request: Request):
+    body = await request.json()
+    rest_key = get_restaurante_key_por_password(body.get("pw", ""))
+    if not rest_key:
+        raise HTTPException(status_code=403)
+    nuevo = body.get("estado", "")
+    if nuevo not in ["activo", "preparando", "enviado", "entregado", "cancelado"]:
+        raise HTTPException(status_code=400)
+    pedido = get_pedido_by_id(pedido_id)
+    if not pedido or pedido.get("restaurante_id") != rest_key:
+        raise HTTPException(status_code=404)
+    return _aplicar_cambio_estado_pedido(pedido, nuevo)
+
+@app.post("/api/restaurante-panel/pedidos/{pedido_id}/buscar-domiciliario")
+async def api_restaurante_panel_buscar_domiciliario(pedido_id: str, request: Request):
+    body = await request.json()
+    rest_key = get_restaurante_key_por_password(body.get("pw", ""))
+    if not rest_key:
+        raise HTTPException(status_code=403)
+    pedido = get_pedido_by_id(pedido_id)
+    if not pedido or pedido.get("restaurante_id") != rest_key:
+        raise HTTPException(status_code=404)
+    return _iniciar_busqueda_domiciliario(pedido)
+
+@app.post("/api/restaurante-panel/configuracion")
+async def api_restaurante_panel_configuracion(request: Request):
+    body = await request.json()
+    rest_key = get_restaurante_key_por_password(body.get("pw", ""))
+    if not rest_key:
+        raise HTTPException(status_code=403)
+    extra = _estado_extra[rest_key]
+    if "domicilio_activo" in body:
+        extra["domicilio_activo"] = bool(body["domicilio_activo"])
+    if "tiempo_espera" in body:
+        te = body["tiempo_espera"]
+        extra["tiempo_espera"] = int(te) if te not in (None, "") else None
+    if "abierto_forzado" in body:
+        extra["abierto_forzado"] = bool(body["abierto_forzado"])
+        extra["fecha_forzado"] = datetime.now(ZONA_HORARIA).date() if extra["abierto_forzado"] else None
+    if "notas" in body:
+        extra["notas"] = [n for n in body["notas"] if n]
+    guardar_estado_extra(rest_key)
+    return {"ok": True}
 
 # ── RUTAS DOMICILIARIOS ──────────────────────────────────────────────────────
 
@@ -1729,6 +1847,15 @@ def check_admin(pw: str):
     if pw != ADMIN_PASSWORD:
         raise HTTPException(status_code=403, detail="No autorizado")
 
+def get_restaurante_key_por_password(pw):
+    """Encuentra qué restaurante tiene esta contraseña de panel propio (si alguno)."""
+    if not pw:
+        return None
+    for key, r in _cache_restaurantes.items():
+        if r.get("panel_password") and r.get("panel_password") == pw:
+            return key
+    return None
+
 # ── APIs ADMIN: RESTAURANTES ──────────────────────────────────────────────────
 
 @app.get("/api/admin/restaurantes")
@@ -1753,6 +1880,7 @@ async def admin_crear_restaurante(request: Request):
             "hora_fin": int(body.get("hora_fin", 23)),
             "domicilio_activo": True,
             "activo": True,
+            "panel_password": body.get("panel_password", ""),
         }
         supabase.table("restaurantes").insert(r).execute()
         cargar_restaurantes()
