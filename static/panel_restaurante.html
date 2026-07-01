@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Panel del restaurante — Ipiales Delivery</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',sans-serif;background:#f5f5f0;color:#222;padding:16px;min-height:100vh}
+.container{max-width:1200px;margin:0 auto}
+header{background:linear-gradient(135deg,#FFC107,#F57C00);border-radius:14px;padding:16px 20px;margin-bottom:18px;box-shadow:0 4px 16px rgba(245,124,0,.25)}
+h1{font-size:1.3rem;color:#222}h1 span{display:block;font-size:.75rem;font-weight:400;color:rgba(34,32,24,.7);margin-top:2px}
+.header-top{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px}
+.btns{display:flex;gap:8px}
+.btn{padding:9px 16px;border:none;border-radius:8px;cursor:pointer;font-weight:700;font-size:.83rem}
+.btn-dark{background:#222;color:#fff}.btn-dark:hover{background:#333}
+.btn-out{background:rgba(34,32,24,.8);color:#fff}.btn-out:hover{background:#222}
+.stats{display:flex;gap:16px;margin-top:10px;font-size:.8rem;color:rgba(34,32,24,.7);font-weight:600;flex-wrap:wrap}
+.cards-resumen{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:14px 0}
+.card-r{background:#fff;border-radius:10px;padding:12px 14px;text-align:center;border:1px solid #FFE2A8}
+.card-r .num{display:block;font-size:1.5rem;font-weight:700;color:#222}
+.card-r .lbl{display:block;font-size:.72rem;color:#888;margin-top:3px}
+.card-r.total{background:#222;border-color:#222}.card-r.total .num{color:#FFC107;font-size:1.7rem}.card-r.total .lbl{color:rgba(255,255,255,.6)}
+.card-r.cancel .num{color:#d32f2f}
+.section{background:#fff;border:1px solid #FFE2A8;border-radius:12px;padding:16px;margin:14px 0}
+.section h3{font-size:.95rem;margin-bottom:12px}
+.form-row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px}
+.form-group{flex:1;min-width:160px}
+.form-group label{display:block;font-size:.78rem;color:#888;margin-bottom:6px;font-weight:600}
+.form-group input,.form-group textarea{width:100%;padding:9px 10px;border:1px solid #FFE2A8;border-radius:8px;font-size:.88rem;background:#FFFBF2}
+.toggle-wrap{display:flex;align-items:center;gap:8px}
+.toggle{width:44px;height:24px;background:#ddd;border-radius:14px;position:relative;cursor:pointer;transition:.2s}
+.toggle.on{background:#4CAF50}
+.toggle .knob{width:18px;height:18px;background:#fff;border-radius:50%;position:absolute;top:3px;left:3px;transition:.2s}
+.toggle.on .knob{left:23px}
+.estado-hoy-badge{font-size:.8rem;font-weight:700;padding:4px 10px;border-radius:6px;display:inline-block;margin-bottom:10px}
+.estado-hoy-badge.abierto{background:#E8F5E9;color:#2E7D32}
+.estado-hoy-badge.cerrado{background:#FDECEA;color:#C62828}
+.tabs{display:flex;gap:8px;margin:14px 0;flex-wrap:wrap}
+.tab{background:#fff;color:#888;border:1px solid #FFE2A8;padding:8px 14px;border-radius:20px;cursor:pointer;font-size:.83rem;font-weight:700;transition:all .15s}
+.tab:hover{border-color:#FFA000;color:#222}
+.tab.on{background:linear-gradient(135deg,#FFC107,#F57C00);color:#222;border-color:#F57C00}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+.card{background:#fff;border-left:4px solid #F57C00;border-radius:10px;padding:14px;box-shadow:0 2px 8px rgba(0,0,0,.07)}
+.pid{font-size:1.1rem;font-weight:700;color:#F57C00}
+.hora{font-size:.78rem;color:#888}
+.tipo-tag{display:inline-block;background:#FFC107;color:#222;padding:3px 8px;border-radius:4px;font-size:.73rem;font-weight:700;margin-top:6px}
+.cli{font-size:.83rem;color:#555;margin:6px 0 2px}
+.cli-nombre{font-size:.83rem;color:#E65100;font-weight:700;margin:2px 0}
+.dir{font-size:.78rem;color:#888;margin-bottom:6px;word-break:break-word}
+.resumen{background:#FFFBF2;padding:8px;border-radius:6px;font-size:.76rem;color:#444;max-height:100px;overflow-y:auto;border-left:3px solid #FFC107;white-space:pre-wrap;margin:6px 0}
+.mods{background:#FFF6E0;border-left:3px solid #FF9800;padding:7px;border-radius:6px;margin:6px 0;font-size:.73rem}
+.quejas-box{background:#FDECEA;border-left:3px solid #f44336;padding:7px;border-radius:6px;margin:6px 0;font-size:.73rem}
+.est-lbl{text-align:center;font-size:.78rem;font-weight:700;padding:4px;border-radius:4px;margin:8px 0 5px}
+.est-lbl.activo{color:#2E7D32}.est-lbl.preparando{color:#1565C0}.est-lbl.enviado{color:#1565C0}.est-lbl.entregado{color:#6A1B9A}.est-lbl.cancelado{color:#C62828}
+.ebts{display:grid;grid-template-columns:repeat(5,1fr);gap:4px}
+.btn-buscar-dom{width:100%;padding:11px;border:none;border-radius:8px;background:linear-gradient(135deg,#FFC107,#F57C00);color:#222;font-weight:700;font-size:.85rem;cursor:pointer;margin:8px 0}
+.btn-buscar-dom:hover{filter:brightness(1.05)}
+.btn-buscar-dom:disabled{opacity:.6;cursor:default}
+.dom-buscando{width:100%;padding:11px;border-radius:8px;background:#3a3a2a;color:#FFC107;font-weight:700;font-size:.85rem;text-align:center;margin:8px 0}
+.dom-asignado{width:100%;padding:11px;border-radius:8px;background:#1b3a1b;color:#4CAF50;font-weight:700;font-size:.85rem;text-align:center;margin:8px 0}
+.eb{padding:8px 0;border:none;border-radius:6px;cursor:pointer;font-size:.95rem;background:#f5f5f0;color:#aaa;opacity:.65;transition:all .15s}
+.eb:hover{opacity:1}.eb.on{opacity:1}
+.eb-activo.on{background:#4CAF50;color:#fff}.eb-preparando.on{background:#FF9800;color:#fff}
+.eb-enviado.on{background:#2196F3;color:#fff}.eb-entregado.on{background:#9C27B0;color:#fff}.eb-cancelado.on{background:#f44336;color:#fff}
+.empty{text-align:center;padding:50px 20px;color:#888;font-size:.95rem}
+.toast{position:fixed;bottom:20px;right:20px;background:#333;color:#fff;padding:12px 18px;border-radius:10px;font-size:.85rem;opacity:0;transition:.3s;z-index:9999;pointer-events:none}
+.toast.show{opacity:1}
+</style></head><body>
+<div class="container">
+<header>
+  <div class="header-top">
+    <h1>🍽️ {{NOMBRE_RESTAURANTE}}<span>Panel de tu restaurante</span></h1>
+    <div class="btns">
+      <button class="btn btn-dark" onclick="cargarTodo()">🔄 Actualizar</button>
+      <button class="btn btn-out" onclick="window.location.href='/panel-restaurante'">Salir</button>
+    </div>
+  </div>
+  <div class="stats">
+    <span id="s-hora">🕐 --:--</span>
+    <span id="s-total">📊 Total: 0</span>
+    <span id="s-activos">⚡ Activos: 0</span>
+  </div>
+</header>
+
+<div class="cards-resumen">
+  <div class="card-r"><span class="num" id="v-cant">0</span><span class="lbl">📦 Pedidos hoy</span></div>
+  <div class="card-r total"><span class="num" id="v-total">$0</span><span class="lbl">💰 Total vendido hoy</span></div>
+  <div class="card-r cancel"><span class="num" id="v-cancel">0</span><span class="lbl">❌ Cancelados hoy</span></div>
+</div>
+
+<div class="section">
+  <h3>⚙️ Estado de hoy</h3>
+  <div id="estado-badge"></div>
+  <div class="form-row">
+    <div class="form-group" style="flex:0 0 auto">
+      <label>Domicilio</label>
+      <div class="toggle-wrap">
+        <div class="toggle" id="toggle-dom" onclick="toggleDomicilio()"><div class="knob"></div></div>
+        <span id="toggle-dom-lbl" style="font-size:.85rem"></span>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Tiempo de espera (min, vacío = sin espera)</label>
+      <input type="number" id="f-espera" min="0" placeholder="Ej: 20">
+    </div>
+    <div class="form-group" style="flex:0 0 auto">
+      <button class="btn btn-dark" onclick="abrirForzadoHoy()">🔓 Abrir hoy (aunque sea fuera de horario)</button>
+    </div>
+  </div>
+  <div class="form-row">
+    <div class="form-group" style="flex:1 1 100%">
+      <label>Notas de hoy (una por línea, ej: "no hay pepperoni")</label>
+      <textarea id="f-notas" rows="3" placeholder="Una nota por línea"></textarea>
+    </div>
+  </div>
+  <button class="btn btn-dark" onclick="guardarConfiguracion()">💾 Guardar cambios</button>
+</div>
+
+<div class="tabs">
+  <button class="tab on" data-tab="todos" onclick="cambiarTab('todos')">📋 Todos <span id="c-todos"></span></button>
+  <button class="tab" data-tab="preparacion" onclick="cambiarTab('preparacion')">📥 Recibidos <span id="c-prep"></span></button>
+  <button class="tab" data-tab="enviados" onclick="cambiarTab('enviados')">🛵 Enviados <span id="c-env"></span></button>
+  <button class="tab" data-tab="entregados" onclick="cambiarTab('entregados')">✅ Entregados <span id="c-ent"></span></button>
+</div>
+<div id="grid" class="grid"></div>
+<div id="empty" class="empty" style="display:none">No hay pedidos en esta pestaña 😊</div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const pw="{{PW}}";
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function toast(msg,tipo){const t=document.getElementById('toast');t.textContent=msg;t.className='toast show';setTimeout(()=>t.className='toast',2500);}
+
+let todos=[], tabActual="todos", estadoActual={};
+
+async function cargarTodo(){
+  try{
+    const r=await fetch(`/api/restaurante-panel/pedidos?pw=${encodeURIComponent(pw)}`);
+    if(r.status===403){window.location.href='/panel-restaurante';return;}
+    const d=await r.json();
+    todos=d.pedidos||[];
+    estadoActual=d.estado||{};
+    render();stats();contadores();ventasHoy();renderEstado();
+  }catch(e){console.error(e);}
+}
+
+function esHoy(iso){
+  try{
+    const a=new Date(iso).toLocaleDateString('es-CO',{timeZone:'America/Bogota'});
+    const b=new Date().toLocaleDateString('es-CO',{timeZone:'America/Bogota'});
+    return a===b;
+  }catch(e){return false;}
+}
+function ventasHoy(){
+  const hoy=todos.filter(p=>esHoy(p.fecha));
+  const vend=hoy.filter(p=>p.estado!=='cancelado');
+  const canc=hoy.filter(p=>p.estado==='cancelado');
+  const total=vend.reduce((a,p)=>a+(p.total||0),0);
+  document.getElementById('v-cant').textContent=vend.length;
+  document.getElementById('v-total').textContent='$'+Math.round(total).toLocaleString('es-CO');
+  document.getElementById('v-cancel').textContent=canc.length;
+}
+function stats(){
+  const ahora=new Date().toLocaleTimeString('es-CO',{hour:'2-digit',minute:'2-digit'});
+  document.getElementById('s-hora').textContent=`🕐 ${ahora}`;
+  document.getElementById('s-total').textContent=`📊 Total: ${todos.length}`;
+  const act=todos.filter(p=>p.estado==='activo'||p.estado==='preparando').length;
+  document.getElementById('s-activos').textContent=`⚡ Activos: ${act}`;
+}
+function contadores(){
+  document.getElementById('c-todos').textContent=`(${todos.length})`;
+  document.getElementById('c-prep').textContent=`(${todos.filter(p=>p.estado==='activo'||p.estado==='preparando').length})`;
+  document.getElementById('c-env').textContent=`(${todos.filter(p=>p.estado==='enviado').length})`;
+  document.getElementById('c-ent').textContent=`(${todos.filter(p=>p.estado==='entregado').length})`;
+}
+function filtrar(tab){
+  if(tab==='preparacion')return todos.filter(p=>p.estado==='activo'||p.estado==='preparando');
+  if(tab==='enviados')return todos.filter(p=>p.estado==='enviado');
+  if(tab==='entregados')return todos.filter(p=>p.estado==='entregado');
+  return todos;
+}
+function cambiarTab(tab){
+  tabActual=tab;
+  document.querySelectorAll('.tab').forEach(b=>b.classList.remove('on'));
+  document.querySelector(`.tab[data-tab="${tab}"]`).classList.add('on');
+  render();
+}
+
+function renderEstado(){
+  const badge=document.getElementById('estado-badge');
+  const abierto=estadoActual.abierto_ahora;
+  badge.innerHTML=`<span class="estado-hoy-badge ${abierto?'abierto':'cerrado'}">${abierto?'✅ Abierto ahora':'❌ Cerrado ahora'}</span>`;
+  const dom=estadoActual.domicilio_activo!==false;
+  document.getElementById('toggle-dom').className='toggle'+(dom?' on':'');
+  document.getElementById('toggle-dom-lbl').textContent=dom?'Activo':'Desactivado';
+  document.getElementById('f-espera').value=estadoActual.tiempo_espera??'';
+  document.getElementById('f-notas').value=(estadoActual.notas||[]).join('\n');
+}
+function toggleDomicilio(){
+  const t=document.getElementById('toggle-dom');
+  const activo=!t.classList.contains('on');
+  t.className='toggle'+(activo?' on':'');
+  document.getElementById('toggle-dom-lbl').textContent=activo?'Activo':'Desactivado';
+}
+async function abrirForzadoHoy(){
+  const r=await fetch('/api/restaurante-panel/configuracion',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pw,abierto_forzado:true})});
+  const d=await r.json();
+  if(d.ok){toast('✅ Abierto hoy');cargarTodo();}else{toast(d.msg||'Error');}
+}
+async function guardarConfiguracion(){
+  const domicilio_activo=document.getElementById('toggle-dom').classList.contains('on');
+  const espera=document.getElementById('f-espera').value.trim();
+  const notas=document.getElementById('f-notas').value.split('\n').map(n=>n.trim()).filter(n=>n);
+  const r=await fetch('/api/restaurante-panel/configuracion',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({pw,domicilio_activo,tiempo_espera:espera===''?null:parseInt(espera),notas})
+  });
+  const d=await r.json();
+  if(d.ok){toast('✅ Guardado');cargarTodo();}else{toast(d.msg||'Error al guardar');}
+}
+
+const EST_MAP={activo:'🆕 Activo',preparando:'📥 Pedido Recibido',enviado:'🛵 Enviado',entregado:'✅ Entregado',cancelado:'❌ Cancelado'};
+const BTNS=[
+  {k:'activo',i:'🆕',c:'eb-activo'},{k:'preparando',i:'📥',c:'eb-preparando'},
+  {k:'enviado',i:'🛵',c:'eb-enviado'},{k:'entregado',i:'✅',c:'eb-entregado'},{k:'cancelado',i:'❌',c:'eb-cancelado'}
+];
+
+function htmlBotonDom(p){
+  if(p.tipo!=='domicilio')return '';
+  const est=p.estado_domiciliario||{};
+  if(est.asignado){
+    return `<div class="dom-asignado">🛵 Asignado a ${esc(est.nombre||'domiciliario')}</div>`;
+  }
+  if(est.buscando){
+    return `<div class="dom-buscando">🔍 Buscando domiciliario...</div>`;
+  }
+  return `<button class="btn-buscar-dom" id="btn-dom-${p.id}" onclick="buscarDomiciliario('${p.id}')">🛵 Empezar a buscar domiciliario</button>`;
+}
+
+async function buscarDomiciliario(id){
+  const btn=document.getElementById(`btn-dom-${id}`);
+  if(btn){btn.disabled=true;btn.textContent="🔍 Buscando...";}
+  try{
+    const r=await fetch(`/api/restaurante-panel/pedidos/${id}/buscar-domiciliario`,{
+      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pw})
+    });
+    const d=await r.json();
+    if(!d.ok){alert(d.msg||"No se pudo buscar domiciliario");}
+    await cargarTodo();
+  }catch(e){
+    alert("Error al buscar domiciliario");
+    cargarTodo();
+  }
+}
+
+async function cambiarEstado(id,estado){
+  await fetch(`/api/restaurante-panel/pedidos/${id}/estado`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pw,estado})});
+  cargarTodo();
+}
+
+function render(){
+  const g=document.getElementById('grid');
+  const e=document.getElementById('empty');
+  const lista=filtrar(tabActual);
+  if(!lista.length){g.innerHTML='';e.style.display='block';return;}
+  e.style.display='none';
+  const orden=['activo','preparando','enviado','entregado'];
+  g.innerHTML=lista.map(p=>{
+    const esFinal=p.estado==='entregado'||p.estado==='cancelado';
+    const idxActual=orden.indexOf(p.estado);
+    return `
+    <div class="card">
+      <div class="pid">#${esc(p.id)}</div>
+      <div class="hora">🕐 ${esc(p.hora||'')}</div>
+      <div class="tipo-tag">${p.tipo==='domicilio'?'🛵 Domicilio':'🏠 Recoger'}</div>
+      <div class="cli">📱 ${esc(p.numero_cliente)}</div>
+      ${p.cliente_nombre?`<div class="cli-nombre">👤 ${esc(p.cliente_nombre)}</div>`:''}
+      <div class="dir">📍 ${esc(p.direccion)}</div>
+      <div class="resumen">${esc(p.resumen||'')}</div>
+      ${p.modificaciones&&p.modificaciones.length?`<div class="mods"><strong>📝 Modificaciones:</strong><br>${p.modificaciones.map(esc).join('<br>')}</div>`:''}
+      ${p.quejas&&p.quejas.length?`<div class="quejas-box"><strong>⚠️ Quejas:</strong><br>${p.quejas.map(esc).join('<br>')}</div>`:''}
+      <div class="est-lbl ${p.estado}">${EST_MAP[p.estado]||p.estado}</div>
+      ${!esFinal?htmlBotonDom(p):''}
+      <div class="ebts">${BTNS.map(b=>{
+        const idxBtn=orden.indexOf(b.k);
+        const bloqueado=esFinal||(idxBtn<idxActual&&b.k!=='cancelado');
+        return `<button class="eb ${b.c} ${p.estado===b.k?'on':''}"
+          title="${b.k}"
+          ${bloqueado?'disabled style="opacity:.25;cursor:not-allowed"':''}
+          onclick="cambiarEstado('${p.id}','${b.k}')">${b.i}</button>`;
+      }).join('')}</div>
+    </div>`;
+  }).join('');
+}
+
+cargarTodo();
+setInterval(cargarTodo,6000);
+</script>
+</body></html>

@@ -310,6 +310,7 @@ function abrirModalRestaurante(r) {
     <div class="form-group"><label>Dirección</label><input id="f-dir" value="${r?.direccion||""}" placeholder="Cra 4 #15-32, Ipiales"></div>
     <div class="form-group"><label>Hora apertura (0-23)</label><input id="f-hi" type="number" min="0" max="23" value="${r?.hora_inicio??12}"></div>
     <div class="form-group"><label>Hora cierre (0-23)</label><input id="f-hf" type="number" min="0" max="23" value="${r?.hora_fin??23}"></div>
+    <div class="form-group"><label>Contraseña del panel del restaurante (opcional)</label><input id="f-pw-panel" value="${r?.panel_password||""}" placeholder="Deja vacío para no darle panel propio"></div>
     <div class="modal-btns">
       <button class="btn btn-ghost" onclick="cerrarModal()">Cancelar</button>
       <button class="btn btn-primary" onclick="guardarRestaurante(${esEditar},${esEditar?`'${r.id}'`:"null"})">Guardar</button>
@@ -324,6 +325,7 @@ async function guardarRestaurante(esEditar, id) {
     direccion: document.getElementById("f-dir").value.trim(),
     hora_inicio: parseInt(document.getElementById("f-hi").value),
     hora_fin: parseInt(document.getElementById("f-hf").value),
+    panel_password: document.getElementById("f-pw-panel").value.trim(),
   };
   if (!datos.nombre) { toast("El nombre es obligatorio","error"); return; }
   let d;
