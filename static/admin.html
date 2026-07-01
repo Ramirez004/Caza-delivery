@@ -122,6 +122,10 @@ tr:hover td{background:var(--surface2)}
         <div class="section-header"><h3>📊 Pedidos por restaurante</h3></div>
         <div class="section-body"><div class="chart-bars" id="chart-rest"></div></div>
       </div>
+      <div class="section">
+        <div class="section-header"><h3>⭐ Calificación promedio</h3></div>
+        <div class="section-body" id="calificaciones-list">Cargando...</div>
+      </div>
     </div>
 
     <!-- RESTAURANTES -->
@@ -253,6 +257,19 @@ async function cargarStats() {
       <div class="bar-lbl">${esc(nombre.split(" ")[0])}</div>
     </div>
   `).join("") || "<p style='color:var(--text2);font-size:.85rem'>Sin datos aún</p>";
+
+  // Calificaciones
+  const calList = document.getElementById("calificaciones-list");
+  const califs = s.promedio_calificacion_por_restaurante || {};
+  const califEntries = Object.entries(califs);
+  calList.innerHTML = califEntries.length
+    ? califEntries.map(([nombre, prom]) => `
+        <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:.85rem">
+          <span>${esc(nombre)}</span>
+          <span>⭐ ${esc(prom)}</span>
+        </div>
+      `).join("")
+    : "<p style='color:var(--text2);font-size:.85rem'>Aún no hay calificaciones</p>";
 }
 
 // ── RESTAURANTES ──
