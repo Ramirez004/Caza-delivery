@@ -395,7 +395,9 @@ def build_system_prompt(rest_key, cliente=None):
     extra = _estado_extra.get(rest_key, {})
     items = get_menu(rest_key)
     desact = extra.get("categorias_desactivadas", set())
-    menu_activo = [i["descripcion"] for i in items if i["activo"] and i["categoria"] not in desact]
+    menu_activo_items = [i for i in items if i["activo"] and i["categoria"] not in desact]
+    menu_activo = [i["descripcion"] for i in menu_activo_items]
+    hay_bebidas = any("bebida" in normalizar_texto(i["categoria"]) for i in menu_activo_items)
     notas = ("\nNOTAS DE HOY:\n- " + "\n- ".join(extra["notas"])) if extra.get("notas") else ""
     espera = f"\nTIEMPO DE ESPERA: {extra['tiempo_espera']} minutos." if extra.get("tiempo_espera") else ""
     dom = "Sí. Costo: $3.000." if extra.get("domicilio_activo", True) else "No disponible."
@@ -403,6 +405,12 @@ def build_system_prompt(rest_key, cliente=None):
     saludo = ""
     if cliente:
         saludo = f"\nEl cliente se llama *{cliente['nombre']}* y su dirección habitual es *{cliente['direccion']}*. Salúdalo por su nombre."
+
+    upsell = (
+        '\n- Si al momento de cerrar el pedido el cliente no ha pedido ninguna bebida, sugiérele UNA sola vez '
+        'agregar algo de tomar (ej: "¿quieres agregar algo de tomar? 🥤") antes de mostrar el resumen final. '
+        'Si dice que no, respeta su decisión y no insistas de nuevo con eso.'
+    ) if hay_bebidas else ""
 
     return f"""Eres el asistente virtual de *{r['nombre']}*, en {r['direccion']}, Ipiales.
 HORARIO: {r['hora_inicio']}:00 – {r['hora_fin']}:00
@@ -416,7 +424,10 @@ INSTRUCCIONES:
 - Habla amigable y natural como empleado real de {r['nombre']}.
 - Si el cliente tiene dirección guardada y pide domicilio, úsala directamente sin preguntar de nuevo.
 - Acumula todos los productos sin mostrar resumen parcial.
-- NUNCA muestres resumen ni total hasta que el cliente diga "es todo", "listo", "eso sería" o similar.
+- Si el cliente pide algo ambiguo (falta tamaño, sabor, o hay varias opciones parecidas en el menú), pregunta cuál quiere exactamente antes de agregarlo al pedido — no asumas ni adivines.
+- Confirma la cantidad exacta de cada producto a medida que el cliente lo va pidiendo.
+- NUNCA agregues al pedido un producto que no esté escrito tal cual en el MENÚ de arriba.
+- NUNCA muestres resumen ni total hasta que el cliente diga "es todo", "listo", "eso sería" o similar.{upsell}
 - Solo entonces muestra resumen completo con total.
 - Si el cliente mencionó lugar de entrega, es domicilio. Confirma la dirección.
 - Al confirmar el pedido SIEMPRE termina con esta frase EXACTA en una línea separada: "✅ Pedido recibido. Estamos preparando tu pedido 🍔"
