@@ -1934,6 +1934,18 @@ def get_restaurante_key_por_password(pw):
             return key
     return None
 
+def password_panel_en_uso(pw, excluir_id=None):
+    """Devuelve el nombre del restaurante que ya tiene esta contraseña de panel
+    (si alguno), para no permitir que dos restaurantes la compartan."""
+    if not pw:
+        return None
+    for key, r in _cache_restaurantes.items():
+        if key == excluir_id:
+            continue
+        if r.get("panel_password") and r.get("panel_password") == pw:
+            return r.get("nombre", key)
+    return None
+
 RESTAURANTE_SESSION_DIAS = 7
 
 def generar_token_restaurante(rest_key):
@@ -1972,6 +1984,10 @@ async def admin_get_restaurantes(request: Request):
 async def admin_crear_restaurante(request: Request):
     body = await request.json()
     check_admin(request)
+    panel_password = body.get("panel_password", "")
+    en_uso = password_panel_en_uso(panel_password)
+    if en_uso:
+        return {"ok": False, "msg": f"Esa contraseña ya la está usando '{en_uso}'. Elige una diferente."}
     try:
         r = {
             "id": body["id"].lower().replace(" ", "_"),
@@ -1995,6 +2011,10 @@ async def admin_crear_restaurante(request: Request):
 async def admin_editar_restaurante(rest_id: str, request: Request):
     body = await request.json()
     check_admin(request)
+    if body.get("panel_password"):
+        en_uso = password_panel_en_uso(body["panel_password"], excluir_id=rest_id)
+        if en_uso:
+            return {"ok": False, "msg": f"Esa contraseña ya la está usando '{en_uso}'. Elige una diferente."}
     try:
         datos = {k: v for k, v in body.items() if k not in ["pw", "id"]}
         if "hora_inicio" in datos: datos["hora_inicio"] = int(datos["hora_inicio"])
