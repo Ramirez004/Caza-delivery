@@ -869,12 +869,25 @@ button{width:100%;padding:12px;background:linear-gradient(135deg,#FFC107,#F57C00
 <div class="box">
   <h1>🍽️ Panel de <span>tu restaurante</span></h1>
   <p>Ipiales Delivery</p>
-  <form onsubmit="entrar(event)">
+  <form id="form-login">
     <input type="password" id="pw" placeholder="Contraseña de tu restaurante" autofocus>
+    <div class="err" id="err" style="color:#c0392b;font-size:.82rem;margin:-6px 0 12px;display:none">Contraseña incorrecta</div>
     <button type="submit">Entrar</button>
   </form>
 </div>
-<script>function entrar(e){e.preventDefault();window.location.href='/panel-restaurante?pw='+encodeURIComponent(document.getElementById('pw').value);}</script>
+<script>
+document.getElementById('form-login').onsubmit = async function(e) {
+  e.preventDefault();
+  const err = document.getElementById('err');
+  err.style.display = 'none';
+  try {
+    const r = await fetch('/panel-restaurante/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({password: document.getElementById('pw').value})});
+    const d = await r.json();
+    if (d.ok) { window.location.href = '/panel-restaurante'; }
+    else { err.textContent = d.msg || 'Contraseña incorrecta'; err.style.display = 'block'; }
+  } catch (e) { err.textContent = 'Error de conexión'; err.style.display = 'block'; }
+};
+</script>
 </body></html>"""
 
 PANEL_HTML = """<!DOCTYPE html>
@@ -1224,19 +1237,39 @@ async def estado_domiciliario(pedido_id: str, pw: str = ""):
 
 # ── PANEL PROPIO POR RESTAURANTE ──────────────────────────────────────────────
 
+@app.post("/panel-restaurante/login")
+async def panel_restaurante_login(request: Request):
+    body = await request.json()
+    rest_key = get_restaurante_key_por_password(body.get("password", ""))
+    if not rest_key:
+        return {"ok": False, "msg": "Contraseña incorrecta"}
+    resp = JSONResponse({"ok": True})
+    resp.set_cookie(
+        "rest_session", generar_token_restaurante(rest_key),
+        httponly=True, secure=True, samesite="strict",
+        max_age=RESTAURANTE_SESSION_DIAS * 86400,
+    )
+    return resp
+
+@app.post("/panel-restaurante/logout")
+async def panel_restaurante_logout():
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie("rest_session")
+    return resp
+
 @app.get("/panel-restaurante")
-async def panel_restaurante_route(pw: str = ""):
-    rest_key = get_restaurante_key_por_password(pw)
-    if rest_key:
-        r = _cache_restaurantes[rest_key]
+async def panel_restaurante_route(request: Request):
+    rest_key = verificar_token_restaurante(request.cookies.get("rest_session", ""))
+    r = _cache_restaurantes.get(rest_key) if rest_key else None
+    if r:
         with open(os.path.join(STATIC_DIR, "panel_restaurante.html"), "r", encoding="utf-8") as f:
             html = f.read()
-        return HTMLResponse(html.replace("{{PW}}", pw).replace("{{NOMBRE_RESTAURANTE}}", r["nombre"]))
+        return HTMLResponse(html.replace("{{NOMBRE_RESTAURANTE}}", r["nombre"]))
     return HTMLResponse(LOGIN_RESTAURANTE_HTML)
 
 @app.get("/api/restaurante-panel/pedidos")
-async def api_restaurante_panel_pedidos(pw: str = ""):
-    rest_key = get_restaurante_key_por_password(pw)
+async def api_restaurante_panel_pedidos(request: Request):
+    rest_key = verificar_token_restaurante(request.cookies.get("rest_session", ""))
     if not rest_key:
         raise HTTPException(status_code=403)
     todos = get_todos_pedidos()
@@ -1259,7 +1292,7 @@ async def api_restaurante_panel_pedidos(pw: str = ""):
 @app.post("/api/restaurante-panel/pedidos/{pedido_id}/estado")
 async def api_restaurante_panel_cambiar_estado(pedido_id: str, request: Request):
     body = await request.json()
-    rest_key = get_restaurante_key_por_password(body.get("pw", ""))
+    rest_key = verificar_token_restaurante(request.cookies.get("rest_session", ""))
     if not rest_key:
         raise HTTPException(status_code=403)
     nuevo = body.get("estado", "")
@@ -1272,8 +1305,7 @@ async def api_restaurante_panel_cambiar_estado(pedido_id: str, request: Request)
 
 @app.post("/api/restaurante-panel/pedidos/{pedido_id}/buscar-domiciliario")
 async def api_restaurante_panel_buscar_domiciliario(pedido_id: str, request: Request):
-    body = await request.json()
-    rest_key = get_restaurante_key_por_password(body.get("pw", ""))
+    rest_key = verificar_token_restaurante(request.cookies.get("rest_session", ""))
     if not rest_key:
         raise HTTPException(status_code=403)
     pedido = get_pedido_by_id(pedido_id)
@@ -1284,7 +1316,7 @@ async def api_restaurante_panel_buscar_domiciliario(pedido_id: str, request: Req
 @app.post("/api/restaurante-panel/configuracion")
 async def api_restaurante_panel_configuracion(request: Request):
     body = await request.json()
-    rest_key = get_restaurante_key_por_password(body.get("pw", ""))
+    rest_key = verificar_token_restaurante(request.cookies.get("rest_session", ""))
     if not rest_key:
         raise HTTPException(status_code=403)
     extra = _estado_extra[rest_key]
@@ -1901,6 +1933,29 @@ def get_restaurante_key_por_password(pw):
         if r.get("panel_password") and r.get("panel_password") == pw:
             return key
     return None
+
+RESTAURANTE_SESSION_DIAS = 7
+
+def generar_token_restaurante(rest_key):
+    expira = int(time.time()) + RESTAURANTE_SESSION_DIAS * 86400
+    firma = hmac.new(SESSION_SECRET.encode(), f"rest:{rest_key}:{expira}".encode(), hashlib.sha256).hexdigest()
+    return f"{rest_key}:{expira}:{firma}"
+
+def verificar_token_restaurante(token):
+    """Si el token es válido devuelve el rest_key al que pertenece, si no None."""
+    if not token or token.count(":") < 2:
+        return None
+    try:
+        rest_key, expira_str, firma = token.split(":", 2)
+        expira = int(expira_str)
+    except ValueError:
+        return None
+    if time.time() > expira:
+        return None
+    firma_esperada = hmac.new(SESSION_SECRET.encode(), f"rest:{rest_key}:{expira}".encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(firma_esperada, firma):
+        return None
+    return rest_key
 
 # ── APIs ADMIN: RESTAURANTES ──────────────────────────────────────────────────
 
