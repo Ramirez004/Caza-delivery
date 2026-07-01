@@ -336,6 +336,43 @@ async function cargarRestaurantes() {
   `).join("");
 }
 
+const DIAS_SEMANA_JS = [
+  {key:'lunes', lbl:'Lunes'}, {key:'martes', lbl:'Martes'}, {key:'miercoles', lbl:'Miércoles'},
+  {key:'jueves', lbl:'Jueves'}, {key:'viernes', lbl:'Viernes'}, {key:'sabado', lbl:'Sábado'}, {key:'domingo', lbl:'Domingo'}
+];
+
+function renderHorarioEditor(horario) {
+  horario = horario || {};
+  return DIAS_SEMANA_JS.map(d => {
+    const cfg = horario[d.key] || {abierto:false, hora_inicio:11, hora_fin:22};
+    return `
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
+      <label style="flex:0 0 90px;font-size:.82rem">${d.lbl}</label>
+      <input type="checkbox" id="hor-abierto-${d.key}" ${cfg.abierto?"checked":""}>
+      <input type="number" id="hor-inicio-${d.key}" min="0" max="23" value="${cfg.hora_inicio??11}" style="width:70px" placeholder="Abre">
+      <span>–</span>
+      <input type="number" id="hor-fin-${d.key}" min="0" max="23" value="${cfg.hora_fin??22}" style="width:70px" placeholder="Cierra">
+    </div>`;
+  }).join("");
+}
+
+function leerHorarioEditor() {
+  const horario = {};
+  DIAS_SEMANA_JS.forEach(d => {
+    horario[d.key] = {
+      abierto: document.getElementById(`hor-abierto-${d.key}`).checked,
+      hora_inicio: parseInt(document.getElementById(`hor-inicio-${d.key}`).value) || 0,
+      hora_fin: parseInt(document.getElementById(`hor-fin-${d.key}`).value) || 0,
+    };
+  });
+  return horario;
+}
+
+function toggleHorarioSemanal() {
+  document.getElementById("horario-semanal-editor").style.display =
+    document.getElementById("f-usar-horario-semanal").checked ? "block" : "none";
+}
+
 function abrirModalRestaurante(r) {
   const esEditar = !!r;
   document.getElementById("modal-content").innerHTML = `
@@ -345,6 +382,10 @@ function abrirModalRestaurante(r) {
     <div class="form-group"><label>Dirección</label><input id="f-dir" value="${r?.direccion||""}" placeholder="Cra 4 #15-32, Ipiales"></div>
     <div class="form-group"><label>Hora apertura (0-23)</label><input id="f-hi" type="number" min="0" max="23" value="${r?.hora_inicio??12}"></div>
     <div class="form-group"><label>Hora cierre (0-23)</label><input id="f-hf" type="number" min="0" max="23" value="${r?.hora_fin??23}"></div>
+    <div class="form-group">
+      <label><input type="checkbox" id="f-usar-horario-semanal" ${r?.horario_semanal?"checked":""} onchange="toggleHorarioSemanal()"> Usar horario distinto por día de la semana (opcional)</label>
+      <div id="horario-semanal-editor" style="margin-top:10px;display:${r?.horario_semanal?"block":"none"}">${renderHorarioEditor(r?.horario_semanal)}</div>
+    </div>
     <div class="form-group"><label>Contraseña del panel del restaurante (opcional)</label><input id="f-pw-panel" value="${r?.panel_password||""}" placeholder="Deja vacío para no darle panel propio"></div>
     <div class="form-group"><label>WhatsApp del restaurante para avisos de pedido (opcional)</label><input id="f-whatsapp-notif" value="${r?.whatsapp_notificacion||""}" placeholder="573145274437 (con código país, sin +)"></div>
     ${(esEditar && r?.panel_password) ? `
@@ -379,6 +420,7 @@ async function guardarRestaurante(esEditar, id) {
     direccion: document.getElementById("f-dir").value.trim(),
     hora_inicio: parseInt(document.getElementById("f-hi").value),
     hora_fin: parseInt(document.getElementById("f-hf").value),
+    horario_semanal: document.getElementById("f-usar-horario-semanal").checked ? leerHorarioEditor() : null,
     panel_password: document.getElementById("f-pw-panel").value.trim(),
     whatsapp_notificacion: document.getElementById("f-whatsapp-notif").value.trim(),
     menu_modo: document.getElementById("f-menu-modo").value,

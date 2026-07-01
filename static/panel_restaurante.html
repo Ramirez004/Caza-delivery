@@ -87,6 +87,29 @@ h1{font-size:1.3rem;color:#222}h1 span{display:block;font-size:.75rem;font-weigh
 </div>
 
 <div class="section">
+  <h3>📊 Mis estadísticas</h3>
+  <div class="cards-resumen">
+    <div class="card-r"><span class="num" id="st-pedidos-hoy">—</span><span class="lbl">📦 Pedidos hoy</span></div>
+    <div class="card-r total"><span class="num" id="st-ventas-hoy">—</span><span class="lbl">💰 Ventas hoy</span></div>
+    <div class="card-r"><span class="num" id="st-ventas-semana">—</span><span class="lbl">📅 Ventas esta semana</span></div>
+    <div class="card-r"><span class="num" id="st-calificacion">—</span><span class="lbl">⭐ Calificación promedio</span></div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>🥘 Mi menú</h3>
+  <p style="font-size:.78rem;color:#888;margin-bottom:10px">Activa o desactiva tus productos (ej. si se te acabó algo hoy). Para cambiar textos o precios, contacta al administrador.</p>
+  <div id="mi-menu-lista">Cargando...</div>
+</div>
+
+<div class="section">
+  <h3>📅 Mi horario</h3>
+  <label style="display:block;font-size:.82rem;margin-bottom:10px"><input type="checkbox" id="f-usar-horario-semanal" onchange="toggleHorarioSemanalRest()"> Usar horario distinto por día de la semana</label>
+  <div id="horario-semanal-editor-rest" style="display:none;margin-bottom:12px"></div>
+  <button class="btn btn-dark" onclick="guardarHorario()">💾 Guardar horario</button>
+</div>
+
+<div class="section">
   <h3>⚙️ Estado de hoy</h3>
   <div id="estado-badge"></div>
   <div class="form-row">
@@ -112,6 +135,18 @@ h1{font-size:1.3rem;color:#222}h1 span{display:block;font-size:.75rem;font-weigh
     </div>
   </div>
   <button class="btn btn-dark" onclick="guardarConfiguracion()">💾 Guardar cambios</button>
+</div>
+
+<div class="section">
+  <h3>📁 Historial por fecha</h3>
+  <div class="form-row">
+    <div class="form-group"><label>Desde</label><input type="date" id="f-filtro-desde"></div>
+    <div class="form-group"><label>Hasta</label><input type="date" id="f-filtro-hasta"></div>
+    <div class="form-group" style="flex:0 0 auto">
+      <button class="btn btn-dark" onclick="cargarTodo()">🔍 Filtrar</button>
+      <button class="btn btn-dark" onclick="limpiarFiltroFecha()">✖️ Ver recientes</button>
+    </div>
+  </div>
 </div>
 
 <div class="tabs">
@@ -152,9 +187,21 @@ function sonarAlerta(){
 let todos=[], tabActual="todos", estadoActual={};
 let idsActivosConocidos = null; // null = primera carga, no alertar todavía
 
+function limpiarFiltroFecha(){
+  document.getElementById('f-filtro-desde').value='';
+  document.getElementById('f-filtro-hasta').value='';
+  cargarTodo();
+}
+
 async function cargarTodo(){
   try{
-    const r=await fetch('/api/restaurante-panel/pedidos');
+    const desde=document.getElementById('f-filtro-desde')?.value||'';
+    const hasta=document.getElementById('f-filtro-hasta')?.value||'';
+    const params=new URLSearchParams();
+    if(desde) params.set('desde', desde);
+    if(hasta) params.set('hasta', hasta);
+    const qs=params.toString();
+    const r=await fetch('/api/restaurante-panel/pedidos'+(qs?`?${qs}`:''));
     if(r.status===403){window.location.href='/panel-restaurante';return;}
     const d=await r.json();
     todos=d.pedidos||[];
@@ -167,7 +214,7 @@ async function cargarTodo(){
     }
     idsActivosConocidos = idsActuales;
 
-    render();stats();contadores();ventasHoy();renderEstado();
+    render();stats();contadores();ventasHoy();renderEstado();renderHorarioDesdeEstado();
   }catch(e){console.error(e);}
 }
 
@@ -320,7 +367,99 @@ function render(){
   }).join('');
 }
 
+// ── ESTADÍSTICAS PROPIAS ──
+async function cargarStatsPropias(){
+  try{
+    const r=await fetch('/api/restaurante-panel/stats');
+    const d=await r.json();
+    if(!d.ok) return;
+    const s=d.stats;
+    document.getElementById('st-pedidos-hoy').textContent=s.pedidos_hoy;
+    document.getElementById('st-ventas-hoy').textContent='$'+Math.round(s.ventas_hoy).toLocaleString('es-CO');
+    document.getElementById('st-ventas-semana').textContent='$'+Math.round(s.ventas_semana).toLocaleString('es-CO');
+    document.getElementById('st-calificacion').textContent=s.promedio_calificacion?`⭐ ${s.promedio_calificacion} (${s.total_calificaciones})`:'Sin datos';
+  }catch(e){console.error(e);}
+}
+
+// ── MI MENÚ (agotado hoy) ──
+async function cargarMiMenu(){
+  const cont=document.getElementById('mi-menu-lista');
+  try{
+    const r=await fetch('/api/restaurante-panel/menu');
+    const d=await r.json();
+    if(!d.ok){cont.textContent='No se pudo cargar el menú';return;}
+    if(!d.data.length){cont.textContent='Aún no tienes productos en tu menú.';return;}
+    cont.innerHTML=d.data.map(item=>`
+      <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #FFE2A8">
+        <div class="toggle" style="${item.activo?'':'background:#ddd'}" onclick="toggleMenuItem(${item.id},${!item.activo})"><div class="knob" style="${item.activo?'left:23px':''}"></div></div>
+        <div style="flex:1">
+          <div style="font-size:.78rem;color:#E65100;font-weight:700;text-transform:uppercase">${esc(item.categoria)}</div>
+          <div style="font-size:.82rem;color:#444">${esc(item.descripcion.substring(0,100))}${item.descripcion.length>100?'...':''}</div>
+        </div>
+      </div>
+    `).join('');
+  }catch(e){cont.textContent='Error al cargar el menú';}
+}
+async function toggleMenuItem(id,activo){
+  const r=await fetch(`/api/restaurante-panel/menu/${id}/toggle`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({activo})});
+  const d=await r.json();
+  if(d.ok){toast(activo?'✅ Producto activado':'🚫 Marcado como agotado');cargarMiMenu();}
+  else{toast(d.msg||'Error','error');}
+}
+
+// ── MI HORARIO ──
+const DIAS_SEMANA_REST=[
+  {key:'lunes',lbl:'Lunes'},{key:'martes',lbl:'Martes'},{key:'miercoles',lbl:'Miércoles'},
+  {key:'jueves',lbl:'Jueves'},{key:'viernes',lbl:'Viernes'},{key:'sabado',lbl:'Sábado'},{key:'domingo',lbl:'Domingo'}
+];
+function renderHorarioEditorRest(horario){
+  horario=horario||{};
+  return DIAS_SEMANA_REST.map(d=>{
+    const cfg=horario[d.key]||{abierto:false,hora_inicio:11,hora_fin:22};
+    return `
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #FFE2A8">
+      <label style="flex:0 0 90px;font-size:.82rem">${d.lbl}</label>
+      <input type="checkbox" id="hr-abierto-${d.key}" ${cfg.abierto?'checked':''}>
+      <input type="number" id="hr-inicio-${d.key}" min="0" max="23" value="${cfg.hora_inicio??11}" style="width:70px">
+      <span>–</span>
+      <input type="number" id="hr-fin-${d.key}" min="0" max="23" value="${cfg.hora_fin??22}" style="width:70px">
+    </div>`;
+  }).join('');
+}
+function toggleHorarioSemanalRest(){
+  document.getElementById('horario-semanal-editor-rest').style.display=
+    document.getElementById('f-usar-horario-semanal').checked?'block':'none';
+}
+let horarioYaCargado=false;
+function renderHorarioDesdeEstado(){
+  if(horarioYaCargado) return; // no pisar lo que el usuario esté editando en cada poll de 6s
+  const horario=estadoActual.horario_semanal;
+  document.getElementById('f-usar-horario-semanal').checked=!!horario;
+  document.getElementById('horario-semanal-editor-rest').style.display=horario?'block':'none';
+  document.getElementById('horario-semanal-editor-rest').innerHTML=renderHorarioEditorRest(horario);
+  horarioYaCargado=true;
+}
+async function guardarHorario(){
+  const usar=document.getElementById('f-usar-horario-semanal').checked;
+  let horario_semanal=null;
+  if(usar){
+    horario_semanal={};
+    DIAS_SEMANA_REST.forEach(d=>{
+      horario_semanal[d.key]={
+        abierto: document.getElementById(`hr-abierto-${d.key}`).checked,
+        hora_inicio: parseInt(document.getElementById(`hr-inicio-${d.key}`).value)||0,
+        hora_fin: parseInt(document.getElementById(`hr-fin-${d.key}`).value)||0,
+      };
+    });
+  }
+  const r=await fetch('/api/restaurante-panel/horario',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({horario_semanal})});
+  const d=await r.json();
+  if(d.ok){toast('✅ Horario guardado');}else{toast(d.msg||'Error al guardar','error');}
+}
+
 cargarTodo();
+cargarStatsPropias();
+cargarMiMenu();
 setInterval(cargarTodo,6000);
 </script>
 </body></html>
