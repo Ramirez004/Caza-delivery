@@ -510,6 +510,27 @@ def notificar_pedido_admin(numero, pedido, es_nuevo=True):
     )
     enviar_whatsapp(ADMIN_NUMBER, msg)
 
+def notificar_pedido_restaurante(pedido, rest_key, es_nuevo=True):
+    """Manda el aviso de pedido nuevo/actualizado directo al WhatsApp del
+    restaurante, si tiene un número configurado para eso."""
+    r = get_restaurante(rest_key)
+    numero_rest = r.get("whatsapp_notificacion") if r else None
+    if not numero_rest:
+        return
+    icono = "🛵" if pedido["tipo"] == "domicilio" else "🏠"
+    prefijo = "🛎️ *Pedido nuevo*" if es_nuevo else "🔄 *Pedido actualizado*"
+    msg = (
+        f"{prefijo} #{pedido['id']}\n"
+        f"🕐 {pedido['hora']}\n"
+        f"{icono} {'Domicilio' if pedido['tipo'] == 'domicilio' else 'Recoger'}\n"
+        f"📍 {pedido['direccion']}\n"
+        f"────────────────\n"
+        f"{pedido['resumen']}\n"
+        f"────────────────\n"
+        f"👉 Entra a tu panel: {os.getenv('PANEL_URL', '')}/panel-restaurante"
+    )
+    enviar_whatsapp(numero_rest, msg)
+
 # ── DOMICILIARIOS ────────────────────────────────────────────────────────────
 
 def get_domiciliarios_disponibles():
@@ -1890,6 +1911,7 @@ async def recibir_mensaje(request: Request):
             datos = extraer_pedido_estructurado(conversacion_txt, rest_key)
             pedido, es_nuevo = crear_pedido(numero, resumen, texto_respuesta, rest_key, datos)
             notificar_pedido_admin(numero, pedido, es_nuevo)
+            notificar_pedido_restaurante(pedido, rest_key, es_nuevo)
 
     except Exception:
         traceback.print_exc()
@@ -2000,6 +2022,7 @@ async def admin_crear_restaurante(request: Request):
             "panel_password": body.get("panel_password", ""),
             "menu_modo": body.get("menu_modo", "texto"),
             "menu_url": body.get("menu_url", ""),
+            "whatsapp_notificacion": body.get("whatsapp_notificacion", ""),
         }
         supabase.table("restaurantes").insert(r).execute()
         cargar_restaurantes()
