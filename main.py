@@ -3,7 +3,7 @@ from fastapi.responses import PlainTextResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 import anthropic, requests, os, traceback, uuid, re, unicodedata, hmac, hashlib
 from dotenv import load_dotenv
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import pytz
 from supabase import create_client, Client
 
@@ -56,31 +56,9 @@ INTERVALO_CORTO_MINUTOS = 15
 _cache_restaurantes = {}
 _cache_menu         = {}   # restaurante_id -> [{"categoria":..,"descripcion":..,"activo":..}]
 
-def cargar_restaurantes():
-    global _cache_restaurantes
-    rows = supabase.table("restaurantes").select("*").execute().data
-    _cache_restaurantes = {r["id"]: r for r in rows}
-
-def cargar_menu():
-    global _cache_menu
-    rows = supabase.table("menu_items").select("*").execute().data
-    _cache_menu = {}
-    for item in rows:
-        rid = item["restaurante_id"]
-        _cache_menu.setdefault(rid, []).append(item)
-
-def get_restaurante(rest_key):
-    return _cache_restaurantes.get(rest_key)
-
-def get_menu(rest_key):
-    return _cache_menu.get(rest_key, [])
-
-# Carga inicial al arrancar
-cargar_restaurantes()
-cargar_menu()
-
-# Estado en memoria (domicilio forzado, espera, categorías desactivadas, notas)
-# Se resetean si Railway reinicia, pero son cosas operativas del día
+# Estado en memoria (domicilio forzado, espera, categorías desactivadas, notas).
+# Se respalda en la tabla "restaurantes" de Supabase (ver _cargar_estado_extra_desde_db
+# y guardar_estado_extra) para que sobreviva a un reinicio de Railway.
 # defaultdict: cualquier restaurante nuevo (creado luego desde el panel admin)
 # recibe automáticamente sus valores por defecto en lugar de lanzar KeyError.
 from collections import defaultdict
@@ -96,6 +74,58 @@ def _estado_extra_default():
     }
 
 _estado_extra = defaultdict(_estado_extra_default)
+
+def cargar_restaurantes():
+    global _cache_restaurantes
+    rows = supabase.table("restaurantes").select("*").execute().data
+    _cache_restaurantes = {r["id"]: r for r in rows}
+
+def cargar_menu():
+    global _cache_menu
+    rows = supabase.table("menu_items").select("*").execute().data
+    _cache_menu = {}
+    for item in rows:
+        rid = item["restaurante_id"]
+        _cache_menu.setdefault(rid, []).append(item)
+
+def _cargar_estado_extra_desde_db():
+    """Reconstruye _estado_extra a partir de las columnas de la tabla restaurantes,
+    para que la configuración diaria del admin sobreviva a un reinicio del servidor."""
+    for key, r in _cache_restaurantes.items():
+        extra = _estado_extra[key]
+        extra["domicilio_activo"] = r.get("domicilio_activo", True)
+        extra["tiempo_espera"] = r.get("tiempo_espera")
+        extra["categorias_desactivadas"] = set(r.get("categorias_desactivadas") or [])
+        extra["notas"] = list(r.get("notas") or [])
+        extra["abierto_forzado"] = bool(r.get("abierto_forzado", False))
+        fecha_str = r.get("fecha_forzado")
+        extra["fecha_forzado"] = date.fromisoformat(fecha_str) if fecha_str else None
+
+def guardar_estado_extra(rest_key):
+    """Persiste el _estado_extra de un restaurante en Supabase (fire-and-forget)."""
+    extra = _estado_extra[rest_key]
+    try:
+        supabase.table("restaurantes").update({
+            "domicilio_activo": extra.get("domicilio_activo", True),
+            "tiempo_espera": extra.get("tiempo_espera"),
+            "categorias_desactivadas": list(extra.get("categorias_desactivadas", set())),
+            "notas": extra.get("notas", []),
+            "abierto_forzado": extra.get("abierto_forzado", False),
+            "fecha_forzado": extra["fecha_forzado"].isoformat() if extra.get("fecha_forzado") else None,
+        }).eq("id", rest_key).execute()
+    except Exception:
+        traceback.print_exc()
+
+def get_restaurante(rest_key):
+    return _cache_restaurantes.get(rest_key)
+
+def get_menu(rest_key):
+    return _cache_menu.get(rest_key, [])
+
+# Carga inicial al arrancar
+cargar_restaurantes()
+cargar_menu()
+_cargar_estado_extra_desde_db()
 
 # ── CLIENTES SUPABASE ─────────────────────────────────────────────────────────
 
@@ -343,6 +373,7 @@ def esta_abierto(rest_key):
     if extra.get("abierto_forzado") and extra.get("fecha_forzado") != ahora.date():
         extra["abierto_forzado"] = False
         extra["fecha_forzado"] = None
+        guardar_estado_extra(rest_key)
     if not r.get("activo", True):
         return False
     return r["hora_inicio"] <= ahora.hour < r["hora_fin"]
@@ -656,6 +687,7 @@ def procesar_comando_admin(texto):
     if t in ["recargar menu", "recargar menú"]:
         cargar_restaurantes()
         cargar_menu()
+        _cargar_estado_extra_desde_db()
         return "✅ Menú y restaurantes recargados desde la base de datos."
 
     # Identificar restaurante
@@ -670,6 +702,7 @@ def procesar_comando_admin(texto):
         if rest_key:
             _estado_extra[rest_key]["abierto_forzado"] = True
             _estado_extra[rest_key]["fecha_forzado"] = datetime.now(ZONA_HORARIA).date()
+            guardar_estado_extra(rest_key)
             return f"✅ *{_cache_restaurantes[rest_key]['nombre']}* abierto hoy. Mañana se cierra solo."
         return "⚠️ No encontré el restaurante."
 
@@ -679,6 +712,7 @@ def procesar_comando_admin(texto):
             _estado_extra[rest_key]["fecha_forzado"] = None
             supabase.table("restaurantes").update({"activo": False}).eq("id", rest_key).execute()
             cargar_restaurantes()
+            guardar_estado_extra(rest_key)
             return f"✅ *{_cache_restaurantes[rest_key]['nombre']}* cerrado."
         return "⚠️ No encontré el restaurante."
 
@@ -690,25 +724,31 @@ def procesar_comando_admin(texto):
 
     if "quita domicilio" in t or "desactiva domicilio" in t:
         extra["domicilio_activo"] = False
+        guardar_estado_extra(rest_key)
         return f"✅ Domicilio desactivado en *{nombre}*."
     if "activa domicilio" in t:
         extra["domicilio_activo"] = True
+        guardar_estado_extra(rest_key)
         return f"✅ Domicilio activado en *{nombre}*."
 
     m = re.search(r"espera\s+(\d+)", t)
     if m:
         extra["tiempo_espera"] = int(m.group(1))
+        guardar_estado_extra(rest_key)
         return f"✅ Espera de *{m.group(1)} min* en {nombre}."
     if "sin espera" in t or "quita espera" in t:
         extra["tiempo_espera"] = None
+        guardar_estado_extra(rest_key)
         return f"✅ Espera eliminada en {nombre}."
 
     if "borra notas" in t or "quita notas" in t:
         extra["notas"].clear()
+        guardar_estado_extra(rest_key)
         return f"✅ Notas borradas en *{nombre}*."
     if t.startswith("nota "):
         nota = re.sub(r"nota\s+", "", t).replace(_cache_restaurantes[rest_key]["nombre"].lower(), "").replace(rest_key.replace("_", " "), "").strip()
         extra["notas"].append(nota)
+        guardar_estado_extra(rest_key)
         return f"✅ Nota en *{nombre}*: '{nota}'"
 
     items = get_menu(rest_key)
@@ -719,6 +759,7 @@ def procesar_comando_admin(texto):
         for cat in categorias:
             if palabra in cat or cat in palabra:
                 extra["categorias_desactivadas"].add(cat)
+                guardar_estado_extra(rest_key)
                 return f"✅ *{cat}* desactivado en {nombre}."
         return f"⚠️ No encontré '{palabra}'. Categorías: {', '.join(categorias)}"
 
@@ -727,6 +768,7 @@ def procesar_comando_admin(texto):
         for cat in categorias:
             if palabra in cat or cat in palabra:
                 extra["categorias_desactivadas"].discard(cat)
+                guardar_estado_extra(rest_key)
                 return f"✅ *{cat}* activado en {nombre}."
         return f"⚠️ No encontré '{palabra}'."
 
@@ -1841,4 +1883,5 @@ input:focus{border-color:#FFC107}button{width:100%;padding:12px;background:#FFC1
 </style></head><body><div class="box"><h1>⚙️ ADMIN <span>PANEL</span></h1><p>Ipiales Delivery</p>
 <form onsubmit="e=event;e.preventDefault();window.location.href='/admin?pw='+encodeURIComponent(document.getElementById('pw').value)">
 <input type="password" id="pw" placeholder="Contraseña admin" autofocus><button type="submit">Entrar</button></form></div></body></html>""")
+
 
