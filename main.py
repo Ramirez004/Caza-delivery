@@ -1535,3 +1535,235 @@ async def recibir_mensaje(request: Request):
         traceback.print_exc()
 
     return {"status": "ok"}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ── PANEL ADMIN ───────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin2024")
+
+def check_admin(pw: str):
+    if pw != ADMIN_PASSWORD:
+        raise HTTPException(status_code=403, detail="No autorizado")
+
+# ── APIs ADMIN: RESTAURANTES ──────────────────────────────────────────────────
+
+@app.get("/api/admin/restaurantes")
+async def admin_get_restaurantes(pw: str = ""):
+    check_admin(pw)
+    try:
+        res = supabase.table("restaurantes").select("*").order("nombre").execute()
+        return {"ok": True, "data": res.data or []}
+    except Exception as e:
+        return {"ok": False, "msg": str(e)}
+
+@app.post("/api/admin/restaurantes")
+async def admin_crear_restaurante(request: Request):
+    body = await request.json()
+    check_admin(body.get("pw", ""))
+    try:
+        r = {
+            "id": body["id"].lower().replace(" ", "_"),
+            "nombre": body["nombre"],
+            "direccion": body.get("direccion", ""),
+            "hora_inicio": int(body.get("hora_inicio", 12)),
+            "hora_fin": int(body.get("hora_fin", 23)),
+            "domicilio_activo": True,
+            "activo": True,
+        }
+        supabase.table("restaurantes").insert(r).execute()
+        cargar_restaurantes()
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "msg": str(e)}
+
+@app.put("/api/admin/restaurantes/{rest_id}")
+async def admin_editar_restaurante(rest_id: str, request: Request):
+    body = await request.json()
+    check_admin(body.get("pw", ""))
+    try:
+        datos = {k: v for k, v in body.items() if k not in ["pw", "id"]}
+        if "hora_inicio" in datos: datos["hora_inicio"] = int(datos["hora_inicio"])
+        if "hora_fin" in datos: datos["hora_fin"] = int(datos["hora_fin"])
+        supabase.table("restaurantes").update(datos).eq("id", rest_id).execute()
+        cargar_restaurantes()
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "msg": str(e)}
+
+@app.delete("/api/admin/restaurantes/{rest_id}")
+async def admin_eliminar_restaurante(rest_id: str, pw: str = ""):
+    check_admin(pw)
+    try:
+        supabase.table("menu_items").delete().eq("restaurante_id", rest_id).execute()
+        supabase.table("restaurantes").delete().eq("id", rest_id).execute()
+        cargar_restaurantes()
+        cargar_menu()
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "msg": str(e)}
+
+# ── APIs ADMIN: MENÚ ──────────────────────────────────────────────────────────
+
+@app.get("/api/admin/menu/{rest_id}")
+async def admin_get_menu(rest_id: str, pw: str = ""):
+    check_admin(pw)
+    try:
+        res = supabase.table("menu_items").select("*").eq("restaurante_id", rest_id).order("categoria").execute()
+        return {"ok": True, "data": res.data or []}
+    except Exception as e:
+        return {"ok": False, "msg": str(e)}
+
+@app.post("/api/admin/menu")
+async def admin_crear_item(request: Request):
+    body = await request.json()
+    check_admin(body.get("pw", ""))
+    try:
+        item = {
+            "restaurante_id": body["restaurante_id"],
+            "categoria": body["categoria"].lower().replace(" ", "_"),
+            "descripcion": body["descripcion"],
+            "activo": True,
+        }
+        supabase.table("menu_items").insert(item).execute()
+        cargar_menu()
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "msg": str(e)}
+
+@app.put("/api/admin/menu/{item_id}")
+async def admin_editar_item(item_id: int, request: Request):
+    body = await request.json()
+    check_admin(body.get("pw", ""))
+    try:
+        datos = {k: v for k, v in body.items() if k not in ["pw", "id"]}
+        supabase.table("menu_items").update(datos).eq("id", item_id).execute()
+        cargar_menu()
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "msg": str(e)}
+
+@app.delete("/api/admin/menu/{item_id}")
+async def admin_eliminar_item(item_id: int, pw: str = ""):
+    check_admin(pw)
+    try:
+        supabase.table("menu_items").delete().eq("id", item_id).execute()
+        cargar_menu()
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "msg": str(e)}
+
+# ── APIs ADMIN: DOMICILIARIOS ─────────────────────────────────────────────────
+
+@app.get("/api/admin/domiciliarios")
+async def admin_get_domiciliarios(pw: str = ""):
+    check_admin(pw)
+    try:
+        res = supabase.table("domiciliarios").select("*").order("nombre").execute()
+        return {"ok": True, "data": res.data or []}
+    except Exception as e:
+        return {"ok": False, "msg": str(e)}
+
+@app.post("/api/admin/domiciliarios")
+async def admin_crear_domiciliario(request: Request):
+    body = await request.json()
+    check_admin(body.get("pw", ""))
+    try:
+        dom = {
+            "nombre": body["nombre"],
+            "telefono": body["telefono"],
+            "pin": body.get("pin", "123456"),
+            "activo": True,
+            "disponible": False,
+        }
+        supabase.table("domiciliarios").insert(dom).execute()
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "msg": str(e)}
+
+@app.put("/api/admin/domiciliarios/{dom_id}")
+async def admin_editar_domiciliario(dom_id: int, request: Request):
+    body = await request.json()
+    check_admin(body.get("pw", ""))
+    try:
+        datos = {k: v for k, v in body.items() if k not in ["pw", "id"]}
+        supabase.table("domiciliarios").update(datos).eq("id", dom_id).execute()
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "msg": str(e)}
+
+@app.delete("/api/admin/domiciliarios/{dom_id}")
+async def admin_eliminar_domiciliario(dom_id: int, pw: str = ""):
+    check_admin(pw)
+    try:
+        supabase.table("asignaciones").delete().eq("domiciliario_id", dom_id).execute()
+        supabase.table("domiciliarios").delete().eq("id", dom_id).execute()
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "msg": str(e)}
+
+# ── APIs ADMIN: CLIENTES Y STATS ──────────────────────────────────────────────
+
+@app.get("/api/admin/clientes")
+async def admin_get_clientes(pw: str = ""):
+    check_admin(pw)
+    try:
+        res = supabase.table("clientes").select("*").order("fecha_registro", desc=True).limit(100).execute()
+        return {"ok": True, "data": res.data or []}
+    except Exception as e:
+        return {"ok": False, "msg": str(e)}
+
+@app.get("/api/admin/stats")
+async def admin_get_stats(pw: str = ""):
+    check_admin(pw)
+    try:
+        pedidos_res = supabase.table("pedidos").select("*").execute()
+        todos = pedidos_res.data or []
+        clientes_res = supabase.table("clientes").select("numero").execute()
+        doms_res = supabase.table("domiciliarios").select("*").execute()
+        rests_res = supabase.table("restaurantes").select("*").execute()
+
+        from datetime import date
+        hoy = date.today().isoformat()
+        hoy_pedidos = [p for p in todos if p.get("fecha", "").startswith(hoy)]
+        total_hoy = sum(p.get("total", 0) for p in hoy_pedidos if p.get("estado") != "cancelado")
+
+        # Pedidos por restaurante
+        por_rest = {}
+        for p in todos:
+            r = p.get("restaurante_nombre", "Sin nombre")
+            por_rest[r] = por_rest.get(r, 0) + 1
+
+        return {
+            "ok": True,
+            "stats": {
+                "total_pedidos": len(todos),
+                "pedidos_hoy": len(hoy_pedidos),
+                "total_hoy": total_hoy,
+                "total_clientes": len(clientes_res.data or []),
+                "total_restaurantes": len(rests_res.data or []),
+                "domiciliarios_disponibles": len([d for d in (doms_res.data or []) if d.get("disponible")]),
+                "pedidos_por_restaurante": por_rest,
+            }
+        }
+    except Exception as e:
+        return {"ok": False, "msg": str(e)}
+
+# ── PANEL ADMIN HTML ──────────────────────────────────────────────────────────
+
+@app.get("/admin")
+async def admin_panel(pw: str = ""):
+    if pw == ADMIN_PASSWORD:
+        with open(os.path.join(STATIC_DIR, "admin.html"), "r") as f:
+            return HTMLResponse(f.read().replace("{{ADMIN_PW}}", ADMIN_PASSWORD))
+    return HTMLResponse("""<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Admin — Ipiales Delivery</title>
+<style>*{box-sizing:border-box}body{background:#0f0f0f;font-family:'Segoe UI',sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;color:#fff}
+.box{background:#1a1a1a;border:1px solid #333;padding:32px 28px;border-radius:16px;text-align:center;width:90%;max-width:340px}
+h1{font-size:1.3rem;margin-bottom:4px}h1 span{color:#FFC107}p{color:#888;margin-bottom:20px;font-size:.87rem}
+input{width:100%;padding:12px;background:#222;border:1px solid #444;border-radius:10px;color:#fff;font-size:1rem;outline:none;margin-bottom:12px}
+input:focus{border-color:#FFC107}button{width:100%;padding:12px;background:#FFC107;border:none;border-radius:10px;color:#1a1a1a;font-weight:700;font-size:1rem;cursor:pointer}
+</style></head><body><div class="box"><h1>⚙️ ADMIN <span>PANEL</span></h1><p>Ipiales Delivery</p>
+<form onsubmit="e=event;e.preventDefault();window.location.href='/admin?pw='+encodeURIComponent(document.getElementById('pw').value)">
+<input type="password" id="pw" placeholder="Contraseña admin" autofocus><button type="submit">Entrar</button></form></div></body></html>""")
