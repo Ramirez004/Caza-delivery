@@ -447,7 +447,13 @@ def build_system_prompt(rest_key, cliente=None):
     items = get_menu(rest_key)
     desact = extra.get("categorias_desactivadas", set())
     menu_activo_items = [i for i in items if i["activo"] and i["categoria"] not in desact]
-    menu_activo = [i["descripcion"] for i in menu_activo_items]
+    menu_activo = []
+    for i in menu_activo_items:
+        linea = i["descripcion"]
+        agotados = i.get("productos_agotados") or []
+        if agotados:
+            linea += f" (NO disponible hoy: {', '.join(agotados)})"
+        menu_activo.append(linea)
     hay_bebidas = any("bebida" in normalizar_texto(i["categoria"]) for i in menu_activo_items)
     notas = ("\nNOTAS DE HOY:\n- " + "\n- ".join(extra["notas"])) if extra.get("notas") else ""
     espera = f"\nTIEMPO DE ESPERA: {extra['tiempo_espera']} minutos." if extra.get("tiempo_espera") else ""
@@ -478,6 +484,7 @@ INSTRUCCIONES:
 - Si el cliente pide algo ambiguo (falta tamaño, sabor, o hay varias opciones parecidas en el menú), pregunta cuál quiere exactamente antes de agregarlo al pedido — no asumas ni adivines.
 - Confirma la cantidad exacta de cada producto a medida que el cliente lo va pidiendo.
 - NUNCA agregues al pedido un producto que no esté escrito tal cual en el MENÚ de arriba.
+- Si un producto aparece marcado como "(NO disponible hoy: ...)", NO lo ofrezcas ni lo agregues al pedido aunque el cliente lo pida — avísale amablemente que hoy no hay y sugiérele otra opción del menú.
 - NUNCA muestres resumen ni total hasta que el cliente diga "es todo", "listo", "eso sería" o similar.{upsell}
 - Solo entonces muestra resumen completo con total.
 - Si el cliente mencionó lugar de entrega, es domicilio. Confirma la dirección.
@@ -522,7 +529,11 @@ def enviar_menu_texto(numero, rest_key):
     lineas = [f"📋 *Menú de {r['nombre']}*\n"]
     for item in items:
         if item["activo"] and item["categoria"] not in desact:
-            lineas.append(item["descripcion"])
+            texto_item = item["descripcion"]
+            agotados = item.get("productos_agotados") or []
+            if agotados:
+                texto_item += f"\n_(No disponible hoy: {', '.join(agotados)})_"
+            lineas.append(texto_item)
     if extra.get("notas"):
         lineas.append("\n📝 *Notas de hoy:*")
         for nota in extra["notas"]:
@@ -1418,6 +1429,25 @@ async def api_restaurante_panel_toggle_item(item_id: int, request: Request):
         if not item_res.data or item_res.data[0]["restaurante_id"] != rest_key:
             raise HTTPException(status_code=404)
         supabase.table("menu_items").update({"activo": bool(body.get("activo", True))}).eq("id", item_id).execute()
+        cargar_menu()
+        return {"ok": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {"ok": False, "msg": str(e)}
+
+@app.post("/api/restaurante-panel/menu/{item_id}/agotados")
+async def api_restaurante_panel_agotados_item(item_id: int, request: Request):
+    body = await request.json()
+    rest_key = verificar_token_restaurante(request.cookies.get("rest_session", ""))
+    if not rest_key:
+        raise HTTPException(status_code=403)
+    try:
+        item_res = supabase.table("menu_items").select("restaurante_id").eq("id", item_id).execute()
+        if not item_res.data or item_res.data[0]["restaurante_id"] != rest_key:
+            raise HTTPException(status_code=404)
+        productos = [p.strip() for p in body.get("productos_agotados", []) if p.strip()]
+        supabase.table("menu_items").update({"productos_agotados": productos}).eq("id", item_id).execute()
         cargar_menu()
         return {"ok": True}
     except HTTPException:
