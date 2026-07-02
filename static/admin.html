@@ -344,11 +344,13 @@ const DIAS_SEMANA_JS = [
 function renderHorarioEditor(horario) {
   horario = horario || {};
   return DIAS_SEMANA_JS.map(d => {
-    const cfg = horario[d.key] || {abierto:false, hora_inicio:11, hora_fin:22};
+    const cfg = horario[d.key] || {abierto:true, hora_inicio:11, hora_fin:22};
     return `
     <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
       <label style="flex:0 0 90px;font-size:.82rem">${d.lbl}</label>
-      <input type="checkbox" id="hor-abierto-${d.key}" ${cfg.abierto?"checked":""}>
+      <label style="display:flex;align-items:center;gap:4px;font-size:.78rem;color:var(--text2)">
+        <input type="checkbox" id="hor-cerrado-${d.key}" ${cfg.abierto?"":"checked"}> Cerrado
+      </label>
       <input type="number" id="hor-inicio-${d.key}" min="0" max="23" value="${cfg.hora_inicio??11}" style="width:70px" placeholder="Abre">
       <span>–</span>
       <input type="number" id="hor-fin-${d.key}" min="0" max="23" value="${cfg.hora_fin??22}" style="width:70px" placeholder="Cierra">
@@ -360,7 +362,7 @@ function leerHorarioEditor() {
   const horario = {};
   DIAS_SEMANA_JS.forEach(d => {
     horario[d.key] = {
-      abierto: document.getElementById(`hor-abierto-${d.key}`).checked,
+      abierto: !document.getElementById(`hor-cerrado-${d.key}`).checked,
       hora_inicio: parseInt(document.getElementById(`hor-inicio-${d.key}`).value) || 0,
       hora_fin: parseInt(document.getElementById(`hor-fin-${d.key}`).value) || 0,
     };
@@ -487,6 +489,7 @@ function abrirModalItem(item) {
     </select></div>`:""}
     <div class="form-group"><label>Categoría (ej: hamburguesas, bebidas)</label><input id="f-cat" value="${item?.categoria||""}" placeholder="hamburguesas"></div>
     <div class="form-group"><label>Descripción completa con precios</label><textarea id="f-desc" placeholder="Hamburguesas: Sencilla $15.000 / Doble $22.000">${item?.descripcion||""}</textarea></div>
+    <div class="form-group"><label>Platos agotados hoy de esta categoría (separados por coma)</label><input id="f-agotados" value="${(item?.productos_agotados||[]).join(', ')}" placeholder="Papas, Malteada de fresa"></div>
     <div class="modal-btns">
       <button class="btn btn-ghost" onclick="cerrarModal()">Cancelar</button>
       <button class="btn btn-primary" onclick="guardarItem(${esEditar},${item?.id||"null"})">Guardar</button>
@@ -499,6 +502,7 @@ async function guardarItem(esEditar, id) {
   const datos = {
     categoria: document.getElementById("f-cat").value.trim(),
     descripcion: document.getElementById("f-desc").value.trim(),
+    productos_agotados: document.getElementById("f-agotados").value.split(",").map(s=>s.trim()).filter(s=>s),
   };
   if (!datos.categoria || !datos.descripcion) { toast("Completa todos los campos","error"); return; }
   let d;
