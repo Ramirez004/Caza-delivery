@@ -197,7 +197,7 @@ async function guardarNuevoPin() {
   }
 }
 
-let disponible = true;
+let disponible = false; // se sincroniza con el servidor en el primer cargarDatos(), este es solo el valor inicial mientras carga
 let pedidoActual = null;
 let misPedidos = [];
 let stats = { pedidos_hoy: 0 };
@@ -210,6 +210,7 @@ async function cargarDatos() {
     ]);
     const dPend = await rPend.json();
     const dMios = await rMios.json();
+    disponible = !!dPend.disponible; // siempre refleja el valor real guardado en el servidor
     pedidoActual = dPend.pedido;
     stats = dPend.stats || stats;
     misPedidos = dMios.pedidos || [];
@@ -217,14 +218,24 @@ async function cargarDatos() {
   } catch (e) { console.error(e); }
 }
 
-function toggleDisponible() {
-  disponible = !disponible;
-  fetch(`${API}/api/domiciliario/disponibilidad`, {
-    method: "POST", headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({ dom_id: domId, token: domToken, disponible })
-  });
-  render();
-  if (disponible) cargarDatos();
+async function toggleDisponible() {
+  const nuevoValor = !disponible;
+  try {
+    const r = await fetch(`${API}/api/domiciliario/disponibilidad`, {
+      method: "POST", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ dom_id: domId, token: domToken, disponible: nuevoValor })
+    });
+    const d = await r.json();
+    if (d.ok) {
+      disponible = nuevoValor;
+      render();
+      if (disponible) cargarDatos();
+    } else {
+      toast(d.msg || "No se pudo cambiar tu disponibilidad");
+    }
+  } catch (e) {
+    toast("Error de conexión, intenta de nuevo");
+  }
 }
 
 async function aceptarPedido(pedidoId) {
