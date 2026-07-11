@@ -321,7 +321,12 @@ async function cargarRestaurantes() {
   if (!restaurantes.length) { tbody.innerHTML = '<tr class="empty-row"><td colspan="5">No hay restaurantes</td></tr>'; return; }
   tbody.innerHTML = restaurantes.map(r => `
     <tr>
-      <td><strong>${esc(r.nombre)}</strong></td>
+      <td>
+        <div style="display:flex;align-items:center;gap:8px">
+          ${r.logo_url ? `<img src="${r.logo_url}" style="width:32px;height:32px;object-fit:cover;border-radius:8px">` : `<div style="width:32px;height:32px;border-radius:8px;background:var(--surface2)"></div>`}
+          <div><strong>${esc(r.nombre)}</strong><br><span style="color:var(--text2);font-size:.72rem">${esc(r.categoria||"Sin categoría")}</span></div>
+        </div>
+      </td>
       <td style="color:var(--text2);font-size:.8rem">${esc(r.direccion||"—")}</td>
       <td style="font-size:.8rem">${esc(r.hora_inicio)}:00 – ${esc(r.hora_fin)}:00</td>
       <td><span class="badge ${r.activo?"badge-green":"badge-red"}">${r.activo?"Activo":"Bloqueado"}</span></td>
@@ -381,6 +386,14 @@ function abrirModalRestaurante(r) {
     <h3>${esEditar?"✏️ Editar":"➕ Nuevo"} restaurante</h3>
     ${!esEditar?`<div class="form-group"><label>ID único (sin espacios, ej: las_bravas)</label><input id="f-id" value="${r?.id||""}" placeholder="las_bravas"></div>`:""}
     <div class="form-group"><label>Nombre</label><input id="f-nombre" value="${r?.nombre||""}" placeholder="Las Bravas"></div>
+    <div class="form-group"><label>Categoría (se muestra en la landing, ej: Pizzas y Pastas)</label><input id="f-categoria" value="${r?.categoria||""}" placeholder="Pizzas y Pastas"></div>
+    <div class="form-group"><label>Descripción corta para la landing</label><textarea id="f-descripcion" placeholder="Pizzas artesanales al horno de leña...">${r?.descripcion||""}</textarea></div>
+    <div class="form-group">
+      <label>Foto / logo para la landing</label>
+      ${r?.logo_url ? `<img src="${r.logo_url}" style="width:64px;height:64px;object-fit:cover;border-radius:12px;margin-bottom:8px;display:block">` : ""}
+      <input id="f-foto" type="file" accept="image/*">
+      <p style="font-size:.72rem;color:var(--text2);margin-top:6px">${esEditar ? "Sube una imagen para reemplazar la actual (se guarda al dar clic en Guardar)." : "Podrás subir la foto después de crear el restaurante, editándolo."}</p>
+    </div>
     <div class="form-group"><label>Dirección</label><input id="f-dir" value="${r?.direccion||""}" placeholder="Cra 4 #15-32, Ipiales"></div>
     <div class="form-group"><label>Hora apertura (0-23)</label><input id="f-hi" type="number" min="0" max="23" value="${r?.hora_inicio??12}"></div>
     <div class="form-group"><label>Hora cierre (0-23)</label><input id="f-hf" type="number" min="0" max="23" value="${r?.hora_fin??23}"></div>
@@ -419,6 +432,8 @@ function abrirModalRestaurante(r) {
 async function guardarRestaurante(esEditar, id) {
   const datos = {
     nombre: document.getElementById("f-nombre").value.trim(),
+    categoria: document.getElementById("f-categoria").value.trim(),
+    descripcion: document.getElementById("f-descripcion").value.trim(),
     direccion: document.getElementById("f-dir").value.trim(),
     hora_inicio: parseInt(document.getElementById("f-hi").value),
     hora_fin: parseInt(document.getElementById("f-hf").value),
@@ -429,16 +444,27 @@ async function guardarRestaurante(esEditar, id) {
     menu_url: document.getElementById("f-menu-url").value.trim(),
   };
   if (!datos.nombre) { toast("El nombre es obligatorio","error"); return; }
-  let d;
+  let d, rid;
   if (esEditar) {
+    rid = id;
     d = await fetch(`/api/admin/restaurantes/${id}`, {method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(datos)}).then(r=>r.json());
   } else {
-    const rid = document.getElementById("f-id").value.trim();
+    rid = document.getElementById("f-id").value.trim();
     if (!rid) { toast("El ID es obligatorio","error"); return; }
     d = await api("POST", "/api/admin/restaurantes", {...datos, id: rid});
   }
-  if (d.ok) { toast("✅ Guardado","success"); cerrarModal(); cargarRestaurantes(); }
-  else toast(d.msg||"Error","error");
+  if (!d.ok) { toast(d.msg||"Error","error"); return; }
+
+  // Si eligió una foto nueva, la subimos aparte (multipart)
+  const inputFoto = document.getElementById("f-foto");
+  if (inputFoto && inputFoto.files && inputFoto.files[0]) {
+    const fd = new FormData();
+    fd.append("foto", inputFoto.files[0]);
+    const dFoto = await fetch(`/api/admin/restaurantes/${rid}/foto`, {method:"POST", body: fd}).then(r=>r.json());
+    if (!dFoto.ok) { toast("Guardado, pero la foto falló: " + (dFoto.msg||"error"), "error"); cerrarModal(); cargarRestaurantes(); return; }
+  }
+
+  toast("✅ Guardado","success"); cerrarModal(); cargarRestaurantes();
 }
 
 async function toggleRestaurante(id, activo) {
