@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no">
 <title>CaZa Delivery — Pide por WhatsApp en Ipiales</title>
 <meta name="description" content="CaZa Delivery — pide tu comida favorita en Ipiales directo por WhatsApp, sin apps ni filas.">
 <style>
@@ -15,12 +15,18 @@
     --border:#E6D8C3;
   }
   *{margin:0;padding:0;box-sizing:border-box}
+  html, body{
+    overflow-x:hidden;
+  }
+  #page-scale{
+    width:1100px;
+    transform-origin:top left;
+  }
   body{
     font-family:'Segoe UI', Georgia, serif;
     background:var(--bg);
     color:var(--text);
     line-height:1.5;
-    min-width:1100px;
   }
   .container{max-width:720px;margin:0 auto;padding:0 24px}
 
@@ -216,6 +222,7 @@
 </style>
 </head>
 <body>
+<div id="page-scale">
 
 <header class="hero">
   <img src="/static/logo.jpg" alt="CaZa Delivery">
@@ -313,6 +320,8 @@
   CaZa Delivery · Ipiales, Nariño
 </footer>
 
+</div>
+
 <!-- Botón flotante de WhatsApp: siempre visible, acceso rápido desde cualquier punto de scroll -->
 <div class="whatsapp-wrap">
   <span class="whatsapp-label">Pide aquí</span>
@@ -322,6 +331,18 @@
 </div>
 
 <script>
+  // Escala todo el contenido para que quepa en el ancho de la pantalla, sin scroll ni zoom
+  function ajustarEscala(){
+    var wrapper = document.getElementById('page-scale');
+    var escala = window.innerWidth / 1100;
+    wrapper.style.transform = 'scale(' + escala + ')';
+    document.body.style.height = (wrapper.offsetHeight * escala) + 'px';
+  }
+  window.addEventListener('load', ajustarEscala);
+  window.addEventListener('resize', ajustarEscala);
+  window.addEventListener('orientationchange', ajustarEscala);
+  ajustarEscala();
+
   // Interactividad: revelar secciones al hacer scroll
   const reveals = document.querySelectorAll('.reveal');
   const observer = new IntersectionObserver((entries) => {
