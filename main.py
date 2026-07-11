@@ -263,8 +263,15 @@ def crear_pedido(numero, resumen, confirmacion_bot, rest_key, datos_estructurado
         if tipo not in ["domicilio", "recoger"]:
             tipo = "recoger"
         direccion = datos_estructurados.get("direccion", "").strip()
-        if tipo == "recoger" or not direccion:
-            direccion = "En local" if tipo == "recoger" else "Ver resumen"
+        if tipo == "recoger":
+            direccion = "En local"
+        elif not direccion:
+            # La extracción no detectó dirección: usar la que el cliente
+            # registró al inscribirse, antes de rendirse con "Ver resumen"
+            cli = get_cliente(numero)
+            direccion = (cli.get("direccion") or "").strip() if cli else ""
+            if not direccion:
+                direccion = "Ver resumen"
         try:
             total = int(datos_estructurados.get("total", 0))
         except (ValueError, TypeError):
@@ -286,7 +293,10 @@ def crear_pedido(numero, resumen, confirmacion_bot, rest_key, datos_estructurado
                     direccion = confirmacion_bot[inicio:].split(".")[0].strip()
                     break
             if direccion == "En local":
-                direccion = "Ver resumen"
+                cli = get_cliente(numero)
+                direccion = (cli.get("direccion") or "").strip() if cli else ""
+                if not direccion:
+                    direccion = "Ver resumen"
         total = 0
         m = re.search(r"Total:?\s*\$?\s?([\d.,]+)", resumen, re.IGNORECASE)
         if m:
@@ -548,9 +558,12 @@ def enviar_menu_texto(numero, rest_key):
 def notificar_pedido_admin(numero, pedido, es_nuevo=True):
     icono = "🛵" if pedido["tipo"] == "domicilio" else "🏠"
     prefijo = "🛎️ *Pedido nuevo*" if es_nuevo else "🔄 *Pedido actualizado*"
+    cli = get_cliente(numero)
+    nombre_cliente = cli.get("nombre", "") if cli else ""
     msg = (
         f"{prefijo} #{pedido['id']}\n"
         f"🍽️ {pedido.get('restaurante_nombre', '')}\n"
+        f"👤 {nombre_cliente or 'Sin nombre'}\n"
         f"📱 +{numero}\n"
         f"🕐 {pedido['hora']}\n"
         f"{icono} {'Domicilio' if pedido['tipo'] == 'domicilio' else 'Recoger'}\n"
@@ -571,8 +584,11 @@ def notificar_pedido_restaurante(pedido, rest_key, es_nuevo=True):
         return
     icono = "🛵" if pedido["tipo"] == "domicilio" else "🏠"
     prefijo = "🛎️ *Pedido nuevo*" if es_nuevo else "🔄 *Pedido actualizado*"
+    cli = get_cliente(pedido.get("numero_cliente", ""))
+    nombre_cliente = cli.get("nombre", "") if cli else ""
     msg = (
         f"{prefijo} #{pedido['id']}\n"
+        f"👤 {nombre_cliente or 'Sin nombre'}\n"
         f"🕐 {pedido['hora']}\n"
         f"{icono} {'Domicilio' if pedido['tipo'] == 'domicilio' else 'Recoger'}\n"
         f"📍 {pedido['direccion']}\n"
@@ -796,11 +812,16 @@ def get_pedidos_sin_asignar():
 def notificar_domiciliarios_whatsapp(pedido):
     """Notifica a domiciliarios disponibles por WhatsApp como respaldo"""
     doms = get_domiciliarios_disponibles()
+    if not doms:
+        return
+    cli = get_cliente(pedido.get("numero_cliente", ""))
+    nombre_cliente = cli.get("nombre", "") if cli else ""
     for dom in doms:
         msg = (
             f"🛵 *¡Pedido nuevo #{pedido['id']}!*\n"
             f"🍽️ {pedido.get('restaurante_nombre', '')}\n"
-            f"📍 {pedido.get('direccion', '')}\n"
+            f"👤 Cliente: {nombre_cliente or 'Sin nombre'}\n"
+            f"📍 Dirección: {pedido.get('direccion', '')}\n"
             f"────────────────\n"
             f"{pedido.get('resumen', '')}\n"
             f"────────────────\n"
@@ -1594,6 +1615,9 @@ async def pedidos_pendientes(dom_id: str = "", token: str = ""):
     # Pedidos esperando domiciliario, directo desde la BD (sobrevive reinicios,
     # excluye cancelados/asignados, y muestra todos — no solo el primero)
     disponibles = get_pedidos_sin_asignar()
+    for p in disponibles:
+        cli = get_cliente(p.get("numero_cliente", ""))
+        p["cliente_nombre"] = cli.get("nombre", "") if cli else ""
     # Stats del día
     try:
         from datetime import date
@@ -1708,6 +1732,8 @@ async def mis_pedidos_dom(dom_id: str = "", token: str = ""):
         for pid in ids:
             p = get_pedido_by_id(pid)
             if p and p["estado"] in ["preparando", "enviado"]:
+                cli = get_cliente(p.get("numero_cliente", ""))
+                p["cliente_nombre"] = cli.get("nombre", "") if cli else ""
                 pedidos.append(p)
         from datetime import date
         hoy = date.today().isoformat()
