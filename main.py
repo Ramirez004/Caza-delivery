@@ -600,10 +600,24 @@ def get_domiciliario_by_nombre(nombre):
     except Exception:
         return None
 
+def normalizar_telefono(t):
+    """Deja solo los dígitos del teléfono (quita +, espacios, guiones, paréntesis)."""
+    return re.sub(r"\D", "", str(t or ""))
+
 def get_domiciliario_by_telefono(telefono):
+    """Busca comparando los últimos 10 dígitos (la línea en Colombia), para que
+    funcione sin importar si el teléfono se guardó con +57, espacios, guiones o
+    sin indicativo — WhatsApp siempre manda 57XXXXXXXXXX pero el admin puede
+    haberlo escrito de cualquier forma."""
+    objetivo = normalizar_telefono(telefono)[-10:]
+    if not objetivo:
+        return None
     try:
-        res = supabase.table("domiciliarios").select("*").eq("telefono", telefono).execute()
-        return res.data[0] if res.data else None
+        res = supabase.table("domiciliarios").select("*").execute()
+        for dom in res.data or []:
+            if normalizar_telefono(dom.get("telefono"))[-10:] == objetivo:
+                return dom
+        return None
     except Exception:
         return None
 
@@ -656,9 +670,9 @@ def verificar_firma_webhook(raw_body: bytes, firma_header: str) -> bool:
     firma_recibida = firma_header.split("=", 1)[1]
     return hmac.compare_digest(firma_esperada, firma_recibida)
 
-def set_disponible_domiciliario(telefono, disponible):
+def set_disponible_domiciliario(dom_id, disponible):
     try:
-        supabase.table("domiciliarios").update({"disponible": disponible}).eq("telefono", telefono).execute()
+        supabase.table("domiciliarios").update({"disponible": disponible}).eq("id", dom_id).execute()
     except Exception:
         traceback.print_exc()
 
@@ -716,7 +730,7 @@ def procesar_mensaje_domiciliario(numero, texto):
     t = texto.strip().lower()
 
     if any(p in t for p in ["entro turno", "entro al turno", "inicio turno", "empiezo turno", "estoy disponible", "ya estoy"]):
-        set_disponible_domiciliario(numero, True)
+        set_disponible_domiciliario(dom["id"], True)
         return (
             f"✅ *¡Listo {dom['nombre']}!* Estás en turno.\n\n"
             f"Te avisaremos cuando haya un pedido disponible. 🛵\n\n"
@@ -724,7 +738,7 @@ def procesar_mensaje_domiciliario(numero, texto):
         )
 
     if any(p in t for p in ["salgo turno", "salgo del turno", "termino turno", "fin turno", "ya no estoy", "me voy"]):
-        set_disponible_domiciliario(numero, False)
+        set_disponible_domiciliario(dom["id"], False)
         return f"👋 *Hasta luego {dom['nombre']}!* Quedas fuera de turno.\n\nEscribe *entro turno* cuando vuelvas a estar disponible."
 
     if any(p in t for p in ["ayuda", "help", "comandos"]):
@@ -757,11 +771,27 @@ def pedido_asignado_a(pedido_id, dom_id):
     except Exception:
         return False
 
-# Pedidos pendientes de asignacion (en memoria, se limpia al asignar)
-_pedidos_pendientes = {}  # pedido_id -> pedido dict
-
-def agregar_pedido_pendiente(pedido):
-    _pedidos_pendientes[pedido["id"]] = pedido
+def get_pedidos_sin_asignar():
+    """Pedidos de domicilio que están esperando domiciliario, directo desde la BD.
+    (Antes esto vivía en un dict en memoria que se borraba con cada reinicio de
+    Railway y solo se llenaba al presionar un botón — por eso a veces los
+    domiciliarios no veían nada en la app.)"""
+    try:
+        res = supabase.table("pedidos").select("*")\
+            .eq("tipo", "domicilio")\
+            .in_("estado", ["activo", "preparando"])\
+            .order("fecha", desc=False)\
+            .limit(20).execute()
+        candidatos = res.data or []
+        if not candidatos:
+            return []
+        ids = [p["id"] for p in candidatos]
+        asig = supabase.table("asignaciones").select("pedido_id").in_("pedido_id", ids).execute()
+        asignados = {a["pedido_id"] for a in (asig.data or [])}
+        return [p for p in candidatos if p["id"] not in asignados]
+    except Exception:
+        traceback.print_exc()
+        return []
 
 def notificar_domiciliarios_whatsapp(pedido):
     """Notifica a domiciliarios disponibles por WhatsApp como respaldo"""
@@ -1264,7 +1294,6 @@ def _iniciar_busqueda_domiciliario(pedido):
     if pedido_ya_asignado(pedido_id):
         return {"ok": False, "msg": "Este pedido ya tiene domiciliario asignado"}
 
-    agregar_pedido_pendiente(pedido)
     doms = get_domiciliarios_disponibles()
     if not doms:
         return {"ok": False, "msg": "No hay domiciliarios disponibles en este momento"}
@@ -1307,7 +1336,10 @@ def _obtener_estado_domiciliario_pedido(pedido_id):
                     nombre = dom_res.data[0]["nombre"]
         except Exception:
             pass
-    buscando = pedido_id in _pedidos_pendientes
+    buscando = False
+    if not asignado:
+        p = get_pedido_by_id(pedido_id)
+        buscando = bool(p and p.get("tipo") == "domicilio" and p.get("estado") in ["activo", "preparando"])
     return {"asignado": asignado, "nombre": nombre, "buscando": buscando}
 
 @app.get("/api/pedidos/{pedido_id}/estado-domiciliario")
@@ -1556,15 +1588,12 @@ async def cambiar_pin_domiciliario(request: Request):
 async def pedidos_pendientes(dom_id: str = "", token: str = ""):
     dom = verificar_sesion_dom(dom_id, token)
     if not dom:
-        return {"pedido": None, "stats": {}, "disponible": False}
+        return {"pedido": None, "pedidos": [], "stats": {}, "disponible": False}
     if not dom.get("disponible"):
-        return {"pedido": None, "stats": {}, "disponible": False}
-    # Buscar pedido pendiente no asignado
-    pedido_para_dom = None
-    for pid, pedido in list(_pedidos_pendientes.items()):
-        if not pedido_ya_asignado(pid):
-            pedido_para_dom = pedido
-            break
+        return {"pedido": None, "pedidos": [], "stats": {}, "disponible": False}
+    # Pedidos esperando domiciliario, directo desde la BD (sobrevive reinicios,
+    # excluye cancelados/asignados, y muestra todos — no solo el primero)
+    disponibles = get_pedidos_sin_asignar()
     # Stats del día
     try:
         from datetime import date
@@ -1573,7 +1602,12 @@ async def pedidos_pendientes(dom_id: str = "", token: str = ""):
         pedidos_hoy = len(res.data or [])
     except Exception:
         pedidos_hoy = 0
-    return {"pedido": pedido_para_dom, "stats": {"pedidos_hoy": pedidos_hoy}, "disponible": True}
+    return {
+        "pedido": disponibles[0] if disponibles else None,  # compatibilidad con app vieja
+        "pedidos": disponibles,
+        "stats": {"pedidos_hoy": pedidos_hoy},
+        "disponible": True,
+    }
 
 @app.post("/api/domiciliario/aceptar")
 async def aceptar_pedido_dom(request: Request):
@@ -1585,12 +1619,10 @@ async def aceptar_pedido_dom(request: Request):
     pedido_id = body.get("pedido_id", "")
     pedido_check = get_pedido_by_id(pedido_id)
     if not pedido_check:
-        _pedidos_pendientes.pop(pedido_id, None)
         return {"ok": False, "msg": "Este pedido ya no existe"}
     if pedido_check.get("tipo") != "domicilio":
         return {"ok": False, "msg": "Este pedido no es de domicilio"}
     if pedido_check.get("estado") not in ["activo", "preparando"]:
-        _pedidos_pendientes.pop(pedido_id, None)
         return {"ok": False, "msg": f"Este pedido ya no está disponible (estado: {pedido_check.get('estado')})"}
     if pedido_ya_asignado(pedido_id):
         return {"ok": False, "msg": "Este pedido ya fue tomado por otro domiciliario"}
@@ -1600,8 +1632,6 @@ async def aceptar_pedido_dom(request: Request):
             "domiciliario_id": dom["id"],
             "estado": "aceptado"
         }).execute()
-        # Quitar de pendientes
-        _pedidos_pendientes.pop(pedido_id, None)
         # Actualizar estado pedido
         actualizar_estado_pedido(pedido_id, "preparando")
         # Notificar al admin
@@ -2080,6 +2110,10 @@ async def recibir_mensaje(request: Request):
             pedido, es_nuevo = crear_pedido(numero, resumen, texto_respuesta, rest_key, datos)
             notificar_pedido_admin(numero, pedido, es_nuevo)
             notificar_pedido_restaurante(pedido, rest_key, es_nuevo)
+            # Aviso automático a domiciliarios en turno (sin esperar a que
+            # alguien presione "Buscar domiciliario" en el panel)
+            if es_nuevo and pedido.get("tipo") == "domicilio":
+                notificar_domiciliarios_whatsapp(pedido)
 
     except Exception:
         traceback.print_exc()
@@ -2299,7 +2333,7 @@ async def admin_crear_domiciliario(request: Request):
     try:
         dom = {
             "nombre": body["nombre"],
-            "telefono": body["telefono"],
+            "telefono": normalizar_telefono(body["telefono"]),
             "pin": body.get("pin", "123456"),
             "activo": True,
             "disponible": False,
@@ -2315,6 +2349,8 @@ async def admin_editar_domiciliario(dom_id: int, request: Request):
     check_admin(request)
     try:
         datos = {k: v for k, v in body.items() if k not in ["pw", "id"]}
+        if "telefono" in datos:
+            datos["telefono"] = normalizar_telefono(datos["telefono"])
         supabase.table("domiciliarios").update(datos).eq("id", dom_id).execute()
         return {"ok": True}
     except Exception as e:
