@@ -56,6 +56,8 @@ RATE_LIMIT_BLOQUEO_SEG  = 60    # tiempo de bloqueo en segundos
 MAX_CHARS_MENSAJE       = 500   # máximo caracteres por mensaje
 clientes_esperando_decision = {}
 clientes_esperando_calificacion = {}  # numero -> pedido_id
+# Última ubicación de WhatsApp enviada por cada cliente (numero -> texto con link de maps)
+ubicacion_reciente = {}
 cliente_restaurante     = {}
 clientes_eligiendo      = {}
 # registro en pasos: numero -> {"paso": "nombre"|"direccion"}
@@ -234,6 +236,7 @@ Formato exacto:
 
 Reglas:
 - Si el cliente mencionó cualquier lugar de entrega (casa, edificio, barrio, calle, conjunto, punto de referencia), tipo es "domicilio".
+- Si el cliente envió su ubicación (aparece un link de maps.google.com en la conversación), tipo es "domicilio" y usa ese link completo (con el nombre del lugar si lo hay) como direccion.
 - Si el cliente dijo explícitamente que recoge en el local, o nunca mencionó dirección y el bot preguntó y confirmó "recoger", tipo es "recoger".
 - Si hay duda, prioriza "domicilio" si se mencionó algún lugar.
 - total debe ser el monto final incluyendo domicilio si aplica.
@@ -269,14 +272,17 @@ def crear_pedido(numero, resumen, confirmacion_bot, rest_key, datos_estructurado
         tipo = datos_estructurados.get("tipo", "recoger")
         if tipo not in ["domicilio", "recoger"]:
             tipo = "recoger"
-        direccion = datos_estructurados.get("direccion", "").strip()
+        direccion = (datos_estructurados.get("direccion") or "").strip()
         if tipo == "recoger":
             direccion = "En local"
         elif not direccion:
-            # La extracción no detectó dirección: usar la que el cliente
-            # registró al inscribirse, antes de rendirse con "Ver resumen"
-            cli = get_cliente(numero)
-            direccion = (cli.get("direccion") or "").strip() if cli else ""
+            # La extracción no detectó dirección: primero la ubicación de
+            # WhatsApp que haya enviado en esta conversación, luego la que
+            # registró al inscribirse, y solo al final "Ver resumen"
+            direccion = ubicacion_reciente.get(numero, "")
+            if not direccion:
+                cli = get_cliente(numero)
+                direccion = (cli.get("direccion") or "").strip() if cli else ""
             if not direccion:
                 direccion = "Ver resumen"
         try:
@@ -300,8 +306,10 @@ def crear_pedido(numero, resumen, confirmacion_bot, rest_key, datos_estructurado
                     direccion = confirmacion_bot[inicio:].split(".")[0].strip()
                     break
             if direccion == "En local":
-                cli = get_cliente(numero)
-                direccion = (cli.get("direccion") or "").strip() if cli else ""
+                direccion = ubicacion_reciente.get(numero, "")
+                if not direccion:
+                    cli = get_cliente(numero)
+                    direccion = (cli.get("direccion") or "").strip() if cli else ""
                 if not direccion:
                     direccion = "Ver resumen"
         total = 0
@@ -477,8 +485,20 @@ def build_system_prompt(rest_key, cliente=None):
     dom = "Sí. Costo: $3.000." if extra.get("domicilio_activo", True) else "No disponible."
 
     saludo = ""
+    instr_direccion_guardada = (
+        "- Si el pedido es a domicilio, PREGÚNTALE primero si quiere que se lo enviemos a su dirección "
+        "guardada o si prefiere dar una diferente. NO la uses automáticamente sin que el cliente confirme cuál usar."
+    )
     if cliente:
-        saludo = f"\nEl cliente se llama *{cliente['nombre']}* y su dirección habitual es *{cliente['direccion']}*. Salúdalo por su nombre."
+        dir_guardada = (cliente.get("direccion") or "").strip()
+        if dir_guardada:
+            saludo = f"\nEl cliente se llama *{cliente['nombre']}* y su dirección habitual es *{dir_guardada}*. Salúdalo por su nombre."
+            instr_direccion_guardada = (
+                f"- Si el cliente pide domicilio, PREGÚNTALE si quiere que se lo enviemos a su dirección guardada "
+                f"(*{dir_guardada}*) o si prefiere dar una diferente. NO la uses automáticamente sin que confirme cuál usar."
+            )
+        else:
+            saludo = f"\nEl cliente se llama *{cliente['nombre']}*. Salúdalo por su nombre."
 
     upsell = (
         '\n- Si al momento de cerrar el pedido el cliente no ha pedido ninguna bebida, sugiérele UNA sola vez '
@@ -496,7 +516,7 @@ MENÚ:
 
 INSTRUCCIONES:
 - Habla amigable y natural como empleado real de {r['nombre']}.
-- Si el cliente tiene dirección guardada y pide domicilio, úsala directamente sin preguntar de nuevo.
+{instr_direccion_guardada}
 - Acumula todos los productos sin mostrar resumen parcial.
 - Si el cliente pide algo ambiguo (falta tamaño, sabor, o hay varias opciones parecidas en el menú), pregunta cuál quiere exactamente antes de agregarlo al pedido — no asumas ni adivines.
 - Confirma la cantidad exacta de cada producto a medida que el cliente lo va pidiendo.
@@ -505,6 +525,8 @@ INSTRUCCIONES:
 - NUNCA muestres resumen ni total hasta que el cliente diga "es todo", "listo", "eso sería" o similar.{upsell}
 - Solo entonces muestra resumen completo con total.
 - Si el cliente mencionó lugar de entrega, es domicilio. Confirma la dirección.
+- Si el pedido es a domicilio y NO tienes clara la dirección, dile textualmente algo como: "Para el domicilio, escríbeme tu dirección completa (barrio, calle/carrera y número), o si prefieres, envíame tu ubicación actual desde WhatsApp (toca el clip 📎 → Ubicación)." No cierres el pedido a domicilio sin dirección confirmada por ninguna de esas dos vías.
+- En el resumen final de un pedido a domicilio SIEMPRE detalla los datos de entrega: dirección exacta (o la ubicación que envió) y el nombre de quien recibe.
 - Al confirmar el pedido SIEMPRE termina con esta frase EXACTA en una línea separada: "✅ Pedido recibido. Estamos preparando tu pedido 🍔"
 - NUNCA uses frases como "en camino", "listo para recoger", "pasamos a preparar" — eso lo decide el restaurante, no tú.
 - Esta frase de confirmación es OBLIGATORIA cada vez que el cliente confirme un pedido.
@@ -559,6 +581,19 @@ def enviar_menu_texto(numero, rest_key):
     lineas.append(f"\n🛵 *Domicilio:* {dom}")
     lineas.append("💳 *Pago:* Nequi, Daviplata, transferencia, efectivo")
     enviar_whatsapp(numero, "\n\n".join(lineas))
+
+def enviar_menu_segun_modo(numero, rest_key):
+    """Manda el menú en el formato que el restaurante configuró:
+    PDF adjunto, link a su página, o el texto automático como respaldo."""
+    r = get_restaurante(rest_key)
+    modo = r.get("menu_modo") if r else None
+    url_menu = r.get("menu_url") if r else None
+    if modo == "pdf" and url_menu:
+        enviar_whatsapp_documento(numero, url_menu, f"Menu-{r['nombre']}.pdf", f"📋 Menú de {r['nombre']}")
+    elif modo == "link" and url_menu:
+        enviar_whatsapp(numero, f"📋 Puedes ver el menú completo de *{r['nombre']}* aquí:\n{url_menu}")
+    else:
+        enviar_menu_texto(numero, rest_key)
 
 # ── NOTIFICACIONES ADMIN ──────────────────────────────────────────────────────
 
@@ -1774,6 +1809,39 @@ async def recibir_mensaje(request: Request):
 
         mensaje = entry["messages"][0]
 
+        # ── UBICACIÓN DE WHATSAPP (clip 📎 → Ubicación) ───────────────────────
+        if mensaje.get("type") == "location":
+            numero = mensaje["from"]
+            loc = mensaje.get("location", {}) or {}
+            lat, lng = loc.get("latitude"), loc.get("longitude")
+            nombre_lugar = (loc.get("name") or loc.get("address") or "").strip()
+            if lat is None or lng is None:
+                enviar_whatsapp(numero, "No pude leer tu ubicación 😅 Intenta enviarla de nuevo o escribe tu dirección.")
+                return {"status": "ok"}
+            link_maps = f"https://maps.google.com/?q={lat},{lng}"
+            direccion_txt = f"{nombre_lugar} — {link_maps}" if nombre_lugar else link_maps
+            ubicacion_reciente[numero] = direccion_txt
+
+            # Si está en pleno registro y le pedimos su dirección, la usamos ahí
+            if numero in clientes_registrando and clientes_registrando[numero].get("paso") == "direccion":
+                nombre_reg = clientes_registrando[numero]["nombre"]
+                crear_cliente(numero, nombre_reg, direccion_txt)
+                clientes_registrando.pop(numero)
+                enviar_whatsapp(numero,
+                    f"✅ *¡Listo {nombre_reg}, ya estás registrado!*\n"
+                    f"📍 Guardamos tu ubicación para las entregas.\n\n"
+                    f"Ahora elige un restaurante 👇")
+                enviar_whatsapp(numero, lista_restaurantes())
+                return {"status": "ok"}
+
+            # Si está en medio de un pedido, la inyectamos a la conversación
+            # para que el bot la use como dirección de entrega
+            if numero in historial:
+                historial[numero].append({"role": "user", "content": f"Mi ubicación exacta para la entrega es: {direccion_txt}"})
+                historial[numero].append({"role": "assistant", "content": "📍 ¡Ubicación recibida! La usaré como dirección de entrega de tu pedido."})
+            enviar_whatsapp(numero, "📍 *¡Ubicación recibida!* La usaremos como tu dirección de entrega 😊")
+            return {"status": "ok"}
+
         if mensaje.get("type") != "text":
             numero = mensaje["from"]
             if numero != ADMIN_NUMBER:
@@ -1946,6 +2014,9 @@ async def recibir_mensaje(request: Request):
             enviar_whatsapp(numero,
                 f"¡Perfecto{' ' + nombre_cli if nombre_cli else ''}! Estás en *{r['nombre']}* 🎉\n"
                 f"📍 {r['direccion']}\n\n"
+                f"Aquí tienes el menú 👇")
+            enviar_menu_segun_modo(numero, rest_key)
+            enviar_whatsapp(numero,
                 f"¿Qué deseas pedir? 😊\n\n"
                 f"_(Escribe *restaurantes* para volver a elegir)_")
             return {"status": "ok"}
@@ -2027,15 +2098,7 @@ async def recibir_mensaje(request: Request):
                 return {"status": "ok"}
 
             if any(p in texto_lower for p in ["el menú", "el menu", "menú", "menu", "carta", "pdf"]):
-                r_menu = get_restaurante(rest_key)
-                modo = r_menu.get("menu_modo") if r_menu else None
-                url_menu = r_menu.get("menu_url") if r_menu else None
-                if modo == "pdf" and url_menu:
-                    enviar_whatsapp_documento(numero, url_menu, f"Menu-{r_menu['nombre']}.pdf", f"📋 Menú de {r_menu['nombre']}")
-                elif modo == "link" and url_menu:
-                    enviar_whatsapp(numero, f"📋 Puedes ver el menú completo de *{r_menu['nombre']}* aquí:\n{url_menu}")
-                else:
-                    enviar_menu_texto(numero, rest_key)
+                enviar_menu_segun_modo(numero, rest_key)
                 enviar_whatsapp(numero, "¿Qué te gustaría pedir? 😊")
                 return {"status": "ok"}
 
