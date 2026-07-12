@@ -51,6 +51,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .btn-danger{background:var(--red);color:#fff;box-shadow:var(--shadow-sm)}.btn-danger:hover{filter:brightness(.92);box-shadow:var(--shadow-md)}
 .btn-ghost{background:transparent;color:var(--text2);border:1px solid var(--border)}.btn-ghost:hover{background:var(--surface2);color:var(--text);border-color:var(--accent)}
 .btn-sm{padding:6px 11px;font-size:.75rem}
+.btn-icon{width:34px;height:34px;padding:0;display:flex;align-items:center;justify-content:center;border-radius:8px;font-size:1rem}
 .btn-success{background:var(--green);color:#fff;box-shadow:var(--shadow-sm)}.btn-success:hover{filter:brightness(.92);box-shadow:var(--shadow-md)}
 /* TABLE */
 table{width:100%;border-collapse:collapse;font-size:.84rem}
@@ -139,19 +140,19 @@ tr:hover td{background:var(--surface2)}
   <!-- SIDEBAR -->
   <aside class="sidebar">
     <div class="sidebar-logo">
-      <h1>⚙️ Admin</h1>
+      <h1>Admin Panel</h1>
       <p>Ipiales Delivery</p>
     </div>
     <nav>
-      <div class="nav-item active" onclick="showTab('dashboard')" id="nav-dashboard"><span class="icon">📊</span> Dashboard</div>
-      <div class="nav-item" onclick="showTab('restaurantes')" id="nav-restaurantes"><span class="icon">🍽️</span> Restaurantes</div>
-      <div class="nav-item" onclick="showTab('menu')" id="nav-menu"><span class="icon">📋</span> Menús</div>
-      <div class="nav-item" onclick="showTab('domiciliarios')" id="nav-domiciliarios"><span class="icon">🛵</span> Domiciliarios</div>
-      <div class="nav-item" onclick="showTab('clientes')" id="nav-clientes"><span class="icon">👥</span> Clientes</div>
+      <div class="nav-item active" onclick="showTab('dashboard')" id="nav-dashboard"><span class="icon">▦</span> Dashboard</div>
+      <div class="nav-item" onclick="showTab('restaurantes')" id="nav-restaurantes"><span class="icon">◧</span> Restaurantes</div>
+      <div class="nav-item" onclick="showTab('menu')" id="nav-menu"><span class="icon">☰</span> Menús</div>
+      <div class="nav-item" onclick="showTab('domiciliarios')" id="nav-domiciliarios"><span class="icon">⊙</span> Domiciliarios</div>
+      <div class="nav-item" onclick="showTab('clientes')" id="nav-clientes"><span class="icon">◯</span> Clientes</div>
     </nav>
-    <div style="margin-top:auto;padding:20px;display:flex;flex-direction:column;gap:10px">
-      <a href="/panel" style="color:var(--text2);font-size:.78rem;text-decoration:none">📦 Ver pedidos →</a>
-      <a href="#" onclick="cerrarSesion();return false;" style="color:var(--text2);font-size:.78rem;text-decoration:none">🔒 Cerrar sesión</a>
+    <div style="margin-top:auto;padding:20px;display:flex;flex-direction:column;gap:12px;border-top:1px solid var(--border)">
+      <a href="/panel" style="color:var(--text2);font-size:.8rem;text-decoration:none;display:flex;align-items:center;gap:8px" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--text2)'"><span>↗</span> Ver pedidos</a>
+      <a href="#" onclick="cerrarSesion();return false;" style="color:var(--text2);font-size:.8rem;text-decoration:none;display:flex;align-items:center;gap:8px" onmouseover="this.style.color='var(--red)'" onmouseout="this.style.color='var(--text2)'"><span>⊗</span> Cerrar sesión</a>
     </div>
   </aside>
 
@@ -161,19 +162,19 @@ tr:hover td{background:var(--surface2)}
     <div id="tab-dashboard">
       <div class="topbar"><div><h2>Dashboard</h2><p id="fecha-actual"></p></div></div>
       <div class="stats-grid">
-        <div class="stat-card"><div class="num" id="s-pedidos-hoy">—</div><div class="lbl">📦 Pedidos hoy</div></div>
-        <div class="stat-card green"><div class="num" id="s-total-hoy">—</div><div class="lbl">💰 Ventas hoy</div></div>
-        <div class="stat-card"><div class="num" id="s-total-pedidos">—</div><div class="lbl">📊 Total pedidos</div></div>
-        <div class="stat-card blue"><div class="num" id="s-clientes">—</div><div class="lbl">👥 Clientes</div></div>
-        <div class="stat-card"><div class="num" id="s-restaurantes">—</div><div class="lbl">🍽️ Restaurantes</div></div>
-        <div class="stat-card green"><div class="num" id="s-doms-disp">—</div><div class="lbl">🛵 Dom. disponibles</div></div>
+        <div class="stat-card"><div class="num" id="s-pedidos-hoy">—</div><div class="lbl">Pedidos hoy</div></div>
+        <div class="stat-card green"><div class="num" id="s-total-hoy">—</div><div class="lbl">Ventas hoy</div></div>
+        <div class="stat-card"><div class="num" id="s-total-pedidos">—</div><div class="lbl">Total pedidos</div></div>
+        <div class="stat-card blue"><div class="num" id="s-clientes">—</div><div class="lbl">Clientes</div></div>
+        <div class="stat-card"><div class="num" id="s-restaurantes">—</div><div class="lbl">Restaurantes</div></div>
+        <div class="stat-card green"><div class="num" id="s-doms-disp">—</div><div class="lbl">Domiciliarios disponibles</div></div>
       </div>
       <div class="section">
-        <div class="section-header"><h3>📊 Pedidos por restaurante</h3></div>
+        <div class="section-header"><h3>Pedidos por restaurante</h3></div>
         <div class="section-body"><div class="chart-bars" id="chart-rest"></div></div>
       </div>
       <div class="section">
-        <div class="section-header"><h3>⭐ Calificación promedio</h3></div>
+        <div class="section-header"><h3>Calificación promedio</h3></div>
         <div class="section-body" id="calificaciones-list">Cargando...</div>
       </div>
     </div>
@@ -317,7 +318,7 @@ async function cargarStats() {
     ? califEntries.map(([nombre, prom]) => `
         <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:.85rem">
           <span>${esc(nombre)}</span>
-          <span>⭐ ${esc(prom)}</span>
+          <span>${esc(prom)} ★</span>
         </div>
       `).join("")
     : "<p style='color:var(--text2);font-size:.85rem'>Aún no hay calificaciones</p>";
@@ -350,9 +351,9 @@ async function cargarRestaurantes() {
       <td><span class="badge ${r.activo?"badge-green":"badge-red"}">${r.activo?"Activo":"Bloqueado"}</span></td>
       <td>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <button class="btn btn-ghost btn-sm" onclick="abrirModalRestaurante(${JSON.stringify(r).replace(/"/g,"&quot;")})">✏️ Editar</button>
-          <button class="btn btn-${r.activo?"danger":"success"} btn-sm" onclick="toggleRestaurante('${r.id}',${!r.activo})">${r.activo?"🚫 Bloquear":"✅ Activar"}</button>
-          <button class="btn btn-danger btn-sm" title="Eliminar" onclick="eliminarRestaurante('${r.id}','${esc(r.nombre)}')">🗑️</button>
+          <button class="btn btn-ghost btn-sm" onclick="abrirModalRestaurante(${JSON.stringify(r).replace(/"/g,"&quot;")})">Editar</button>
+          <button class="btn btn-${r.activo?"danger":"success"} btn-sm" onclick="toggleRestaurante('${r.id}',${!r.activo})">${r.activo?"Bloquear":"Activar"}</button>
+          <button class="btn btn-danger btn-sm btn-icon" title="Eliminar" onclick="eliminarRestaurante('${r.id}','${esc(r.nombre)}')">✕</button>
         </div>
       </td>
     </tr>
@@ -401,7 +402,7 @@ function toggleHorarioSemanal() {
 function abrirModalRestaurante(r) {
   const esEditar = !!r;
   document.getElementById("modal-content").innerHTML = `
-    <h3>${esEditar?"✏️ Editar":"➕ Nuevo"} restaurante</h3>
+    <h3>${esEditar?"Editar":"Nuevo"} restaurante</h3>
     ${!esEditar?`<div class="form-group"><label>ID único (sin espacios, ej: las_bravas)</label><input id="f-id" value="${r?.id||""}" placeholder="las_bravas"></div>`:""}
     <div class="form-group"><label>Nombre</label><input id="f-nombre" value="${r?.nombre||""}" placeholder="Las Bravas"></div>
     <div class="form-group"><label>Categoría (se muestra en la landing, ej: Pizzas y Pastas)</label><input id="f-categoria" value="${r?.categoria||""}" placeholder="Pizzas y Pastas"></div>
@@ -426,7 +427,7 @@ function abrirModalRestaurante(r) {
       <label>Link del panel de este restaurante</label>
       <div style="display:flex;gap:6px">
         <input id="f-link-panel" value="${window.location.origin}/panel-restaurante" readonly style="color:var(--text2)">
-        <button type="button" class="btn btn-ghost btn-sm" onclick="copiarLinkPanel()">📋 Copiar</button>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="copiarLinkPanel()">Copiar</button>
       </div>
       <p style="font-size:.72rem;color:var(--text2);margin-top:6px">Comparte este link junto con la contraseña de arriba — el restaurante entra con esa contraseña.</p>
     </div>` : ""}
@@ -482,19 +483,19 @@ async function guardarRestaurante(esEditar, id) {
     if (!dFoto.ok) { toast("Guardado, pero la foto falló: " + (dFoto.msg||"error"), "error"); cerrarModal(); cargarRestaurantes(); return; }
   }
 
-  toast("✅ Guardado","success"); cerrarModal(); cargarRestaurantes();
+  toast("Guardado correctamente","success"); cerrarModal(); cargarRestaurantes();
 }
 
 async function toggleRestaurante(id, activo) {
   const d = await fetch(`/api/admin/restaurantes/${id}`, {method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({activo})}).then(r=>r.json());
-  if (d.ok) { toast(activo?"✅ Restaurante activado":"🚫 Restaurante bloqueado", activo?"success":""); cargarRestaurantes(); }
+  if (d.ok) { toast(activo?"Restaurante activado":"Restaurante bloqueado", activo?"success":""); cargarRestaurantes(); }
   else toast(d.msg||"Error","error");
 }
 
 async function eliminarRestaurante(id, nombre) {
   if (!confirm(`¿Eliminar "${nombre}"? Se borrará también su menú.`)) return;
   const d = await fetch(`/api/admin/restaurantes/${id}`, {method:"DELETE"}).then(r=>r.json());
-  if (d.ok) { toast("🗑️ Restaurante eliminado"); cargarRestaurantes(); }
+  if (d.ok) { toast("Eliminado correctamente","success"); cargarRestaurantes(); }
   else toast(d.msg||"Error","error");
 }
 
@@ -515,8 +516,8 @@ async function cargarMenu() {
       </td>
       <td>
         <div style="display:flex;gap:6px">
-          <button class="btn btn-ghost btn-sm" title="Editar" onclick="abrirModalItem(${JSON.stringify(item).replace(/"/g,"&quot;")})">✏️</button>
-          <button class="btn btn-danger btn-sm" title="Eliminar" onclick="eliminarItem(${item.id})">🗑️</button>
+          <button class="btn btn-ghost btn-sm btn-icon" title="Editar" onclick="abrirModalItem(${JSON.stringify(item).replace(/"/g,"&quot;")})">✎</button>
+          <button class="btn btn-danger btn-sm btn-icon" title="Eliminar" onclick="eliminarItem(${item.id})">✕</button>
         </div>
       </td>
     </tr>
@@ -527,7 +528,7 @@ function abrirModalItem(item) {
   const esEditar = !!item;
   const rest_id = document.getElementById("sel-rest-menu")?.value || "";
   document.getElementById("modal-content").innerHTML = `
-    <h3>${esEditar?"✏️ Editar":"➕ Nuevo"} ítem del menú</h3>
+    <h3>${esEditar?"Editar":"Nuevo"} ítem del menú</h3>
     ${!esEditar?`<div class="form-group"><label>Restaurante</label><select id="f-rest" style="width:100%;padding:10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text)">
       ${restaurantes.map(r=>`<option value="${r.id}" ${r.id===rest_id?"selected":""}>${esc(r.nombre)}</option>`).join("")}
     </select></div>`:""}
@@ -556,7 +557,7 @@ async function guardarItem(esEditar, id) {
     const rest_id = document.getElementById("f-rest")?.value || document.getElementById("sel-rest-menu")?.value;
     d = await api("POST", "/api/admin/menu", {...datos, restaurante_id: rest_id});
   }
-  if (d.ok) { toast("✅ Guardado","success"); cerrarModal(); cargarMenu(); }
+  if (d.ok) { toast("Guardado correctamente","success"); cerrarModal(); cargarMenu(); }
   else toast(d.msg||"Error","error");
 }
 
@@ -569,7 +570,7 @@ async function toggleItem(id, activo) {
 async function eliminarItem(id) {
   if (!confirm("¿Eliminar este ítem del menú?")) return;
   const d = await fetch(`/api/admin/menu/${id}`,{method:"DELETE"}).then(r=>r.json());
-  if (d.ok) { toast("🗑️ Ítem eliminado"); cargarMenu(); }
+  if (d.ok) { toast("Ítem eliminado","success"); cargarMenu(); }
   else toast(d.msg||"Error","error");
 }
 
@@ -588,8 +589,8 @@ async function cargarDomiciliarios() {
       <td><div class="toggle-sm ${dom.activo?"on":""}" onclick="toggleDom(${dom.id},${!dom.activo})"><div class="knob"></div></div></td>
       <td>
         <div style="display:flex;gap:6px">
-          <button class="btn btn-ghost btn-sm" title="Editar" onclick="abrirModalDom(${JSON.stringify(dom).replace(/"/g,"&quot;")})">✏️</button>
-          <button class="btn btn-danger btn-sm" title="Eliminar" onclick="eliminarDom(${dom.id},'${esc(dom.nombre)}')">🗑️</button>
+          <button class="btn btn-ghost btn-sm btn-icon" title="Editar" onclick="abrirModalDom(${JSON.stringify(dom).replace(/"/g,"&quot;")})">✎</button>
+          <button class="btn btn-danger btn-sm btn-icon" title="Eliminar" onclick="eliminarDom(${dom.id},'${esc(dom.nombre)}')">✕</button>
         </div>
       </td>
     </tr>
@@ -599,7 +600,7 @@ async function cargarDomiciliarios() {
 function abrirModalDom(dom) {
   const esEditar = !!dom;
   document.getElementById("modal-content").innerHTML = `
-    <h3>${esEditar?"✏️ Editar":"➕ Nuevo"} domiciliario</h3>
+    <h3>${esEditar?"Editar":"Nuevo"} domiciliario</h3>
     <div class="form-group"><label>Nombre</label><input id="f-nombre" value="${dom?.nombre||""}" placeholder="Juan"></div>
     <div class="form-group"><label>Teléfono (con código país, ej: 573145274437)</label><input id="f-tel" value="${dom?.telefono||""}" placeholder="573145274437"></div>
     <div class="form-group"><label>PIN (6 dígitos)</label><input id="f-pin" value="${dom?.pin||"123456"}" maxlength="6" placeholder="123456"></div>
@@ -625,7 +626,7 @@ async function guardarDom(esEditar, id) {
   } else {
     d = await api("POST", "/api/admin/domiciliarios", datos);
   }
-  if (d.ok) { toast("✅ Guardado","success"); cerrarModal(); cargarDomiciliarios(); }
+  if (d.ok) { toast("Guardado correctamente","success"); cerrarModal(); cargarDomiciliarios(); }
   else toast(d.msg||"Error","error");
 }
 
@@ -638,7 +639,7 @@ async function toggleDom(id, activo) {
 async function eliminarDom(id, nombre) {
   if (!confirm(`¿Eliminar a "${nombre}"?`)) return;
   const d = await fetch(`/api/admin/domiciliarios/${id}`,{method:"DELETE"}).then(r=>r.json());
-  if (d.ok) { toast("🗑️ Eliminado"); cargarDomiciliarios(); }
+  if (d.ok) { toast("Eliminado correctamente","success"); cargarDomiciliarios(); }
   else toast(d.msg||"Error","error");
 }
 
@@ -669,7 +670,7 @@ function copiarLinkPanel() {
   const input = document.getElementById("f-link-panel");
   input.select();
   navigator.clipboard.writeText(input.value).then(
-    () => toast("✅ Link copiado", "success"),
+    () => toast("Link copiado", "success"),
     () => toast("No se pudo copiar, cópialo manualmente", "error")
   );
 }
