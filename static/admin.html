@@ -730,7 +730,8 @@ async function cargarClientes() {
 // ── CÓDIGOS DE DESCUENTO ──
 let codigosCache = [];
 function fmtDescuento(c) {
-  return c.tipo === "porcentaje" ? `${c.valor}%` : `$${Number(c.valor).toLocaleString("es-CO")}`;
+  const base = c.tipo === "porcentaje" ? `${c.valor}%` : `$${Number(c.valor).toLocaleString("es-CO")}`;
+  return c.aplica_a === "domicilio" ? `${base} domicilio` : base;
 }
 async function cargarCodigos() {
   const d = await api("GET", "/api/admin/codigos");
@@ -772,13 +773,20 @@ function abrirModalCodigo(c) {
       </select>
     </div>
     <div class="form-group">
+      <label>Aplica a</label>
+      <select id="f-cod-aplica-a">
+        <option value="total" ${(!c||c?.aplica_a==="total"||!c?.aplica_a)?"selected":""}>Total del pedido</option>
+        <option value="domicilio" ${c?.aplica_a==="domicilio"?"selected":""}>Costo del domicilio (nunca más del costo real)</option>
+      </select>
+    </div>
+    <div class="form-group">
       <label>Tipo de descuento</label>
       <select id="f-cod-tipo">
         <option value="porcentaje" ${(!c||c?.tipo==="porcentaje")?"selected":""}>Porcentaje (%)</option>
         <option value="fijo" ${c?.tipo==="fijo"?"selected":""}>Monto fijo ($)</option>
       </select>
     </div>
-    <div class="form-group"><label>Valor</label><input id="f-cod-valor" type="number" min="0" value="${c?.valor??10}" placeholder="10"></div>
+    <div class="form-group"><label>Valor (100% si aplica a domicilio = domicilio gratis)</label><input id="f-cod-valor" type="number" min="0" value="${c?.valor??10}" placeholder="10"></div>
     <div class="form-group"><label>Usos totales disponibles</label><input id="f-cod-usos" type="number" min="1" value="${c?.usos_totales??50}"></div>
     <div class="form-group"><label>Monto mínimo de compra (opcional)</label><input id="f-cod-minimo" type="number" min="0" value="${c?.monto_minimo??0}" placeholder="0 = sin mínimo"></div>
     <div class="modal-btns">
@@ -797,6 +805,7 @@ async function guardarCodigo(esEditar, id) {
     valor: parseFloat(document.getElementById("f-cod-valor").value) || 0,
     usos_totales: parseInt(document.getElementById("f-cod-usos").value) || 1,
     monto_minimo: parseFloat(document.getElementById("f-cod-minimo").value) || 0,
+    aplica_a: document.getElementById("f-cod-aplica-a").value,
   };
   let d;
   if (esEditar) {

@@ -1761,7 +1761,8 @@
     // ── CÓDIGOS DE DESCUENTO ──
     let codigosRestCache = [];
     function fmtDescuentoRest(c){
-      return c.tipo === 'porcentaje' ? `${c.valor}%` : `$${Number(c.valor).toLocaleString('es-CO')}`;
+      const base = c.tipo === 'porcentaje' ? `${c.valor}%` : `$${Number(c.valor).toLocaleString('es-CO')}`;
+      return c.aplica_a === 'domicilio' ? `${base} domicilio` : base;
     }
     async function cargarCodigosRest(){
       const r = await fetch('/api/restaurante-panel/codigos');
@@ -1788,13 +1789,20 @@
         <h3>Nuevo código de descuento</h3>
         <div class="form-group"><label>Código</label><input id="fr-cod-texto" placeholder="FRISBY20" style="text-transform:uppercase"></div>
         <div class="form-group">
+          <label>Aplica a</label>
+          <select id="fr-cod-aplica-a">
+            <option value="total">Total del pedido</option>
+            <option value="domicilio">Costo del domicilio (nunca más del costo real)</option>
+          </select>
+        </div>
+        <div class="form-group">
           <label>Tipo de descuento</label>
           <select id="fr-cod-tipo">
             <option value="porcentaje">Porcentaje (%)</option>
             <option value="fijo">Monto fijo ($)</option>
           </select>
         </div>
-        <div class="form-group"><label>Valor</label><input id="fr-cod-valor" type="number" min="0" value="10"></div>
+        <div class="form-group"><label>Valor (100% si aplica a domicilio = domicilio gratis)</label><input id="fr-cod-valor" type="number" min="0" value="10"></div>
         <div class="form-group"><label>Usos totales disponibles</label><input id="fr-cod-usos" type="number" min="1" value="50"></div>
         <div class="form-group"><label>Monto mínimo de compra (opcional)</label><input id="fr-cod-minimo" type="number" min="0" value="0" placeholder="0 = sin mínimo"></div>
         <div class="modal-btns">
@@ -1813,6 +1821,7 @@
         valor: parseFloat(document.getElementById('fr-cod-valor').value) || 0,
         usos_totales: parseInt(document.getElementById('fr-cod-usos').value) || 1,
         monto_minimo: parseFloat(document.getElementById('fr-cod-minimo').value) || 0,
+        aplica_a: document.getElementById('fr-cod-aplica-a').value,
       };
       if(!datos.codigo){ toast('El código es obligatorio', 'error'); return; }
       const r = await fetch('/api/restaurante-panel/codigos', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(datos)});
