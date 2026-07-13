@@ -76,7 +76,141 @@ Error generating stack: `+l.message+`
 </script>
 
     <div id="root"></div>
-    
+
+    <!-- ── Integración menú + pedido por WhatsApp (agregado aparte, no toca el diseño de arriba) ── -->
+    <style id="cd-menu-styles">
+      #cd-menu-overlay{position:fixed;inset:0;background:rgba(20,15,10,.6);display:none;align-items:center;justify-content:center;z-index:99999;padding:20px;backdrop-filter:blur(2px);font-family:'Inter',-apple-system,sans-serif}
+      #cd-menu-overlay.show{display:flex}
+      .cd-modal{background:#fffdf9;color:#2a2118;border-radius:18px;max-width:440px;width:100%;max-height:85vh;overflow-y:auto;box-shadow:0 20px 50px rgba(0,0,0,.3);position:relative}
+      @media(prefers-color-scheme:dark){.cd-modal{background:#211a14;color:#f2ece3}}
+      .cd-modal-head{padding:22px 24px 14px;border-bottom:1px solid rgba(0,0,0,.08);position:sticky;top:0;background:inherit;z-index:1}
+      @media(prefers-color-scheme:dark){.cd-modal-head{border-bottom-color:rgba(255,255,255,.1)}}
+      .cd-modal-head h2{font-family:'Poppins',sans-serif;font-size:1.25rem;font-weight:700;margin:0 0 2px}
+      .cd-modal-head p{font-size:.8rem;opacity:.65;margin:0}
+      .cd-modal-close{position:absolute;top:16px;right:16px;width:32px;height:32px;border:none;border-radius:50%;background:rgba(0,0,0,.06);color:inherit;font-size:1.2rem;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1}
+      @media(prefers-color-scheme:dark){.cd-modal-close{background:rgba(255,255,255,.1)}}
+      .cd-modal-body{padding:18px 24px 24px}
+      .cd-cat{margin-bottom:16px}
+      .cd-cat-nombre{font-family:'Poppins',sans-serif;font-weight:700;font-size:.78rem;text-transform:uppercase;letter-spacing:.5px;color:oklch(55% .22 29);margin-bottom:4px}
+      .cd-cat-desc{font-size:.88rem;line-height:1.5;white-space:pre-wrap;opacity:.9}
+      .cd-cat-agotados{font-size:.76rem;color:#c0392b;margin-top:4px;font-style:italic}
+      .cd-textarea-label{display:block;font-size:.82rem;font-weight:600;margin:18px 0 8px}
+      .cd-textarea{width:100%;padding:12px;border-radius:10px;border:1px solid rgba(0,0,0,.15);background:rgba(0,0,0,.02);color:inherit;font-family:inherit;font-size:.9rem;min-height:80px;resize:vertical;box-sizing:border-box}
+      @media(prefers-color-scheme:dark){.cd-textarea{border-color:rgba(255,255,255,.15);background:rgba(255,255,255,.05)}}
+      .cd-textarea:focus{outline:none;border-color:oklch(55% .22 29)}
+      .cd-btn-wa{width:100%;margin-top:14px;padding:14px;border:none;border-radius:12px;background:oklch(55% .22 29);color:#fff;font-weight:700;font-size:.95rem;cursor:pointer;font-family:'Poppins',sans-serif}
+      .cd-btn-wa:hover{filter:brightness(1.08)}
+      .cd-btn-wa:disabled{opacity:.5;cursor:not-allowed}
+      .cd-loading,.cd-error{padding:30px 0;text-align:center;font-size:.9rem;opacity:.7}
+    </style>
+    <div id="cd-menu-overlay">
+      <div class="cd-modal" id="cd-modal">
+        <div class="cd-loading">Cargando menú...</div>
+      </div>
+    </div>
+    <script id="cd-menu-integration">
+      (function(){
+        var restaurantesCache = null;
+
+        function getRestaurantes(){
+          if(restaurantesCache) return Promise.resolve(restaurantesCache);
+          return fetch('/api/restaurantes-publicos').then(function(r){return r.json();}).then(function(d){
+            restaurantesCache = (d && d.data) || [];
+            return restaurantesCache;
+          });
+        }
+
+        function extraerNombreDeLink(href){
+          try{
+            var url = new URL(href, window.location.origin);
+            var texto = decodeURIComponent(url.searchParams.get('text') || '');
+            var m = texto.match(/quiero pedir de (.+)$/i);
+            return m ? m[1].trim() : null;
+          }catch(e){ return null; }
+        }
+
+        function cerrarModal(){
+          document.getElementById('cd-menu-overlay').classList.remove('show');
+        }
+
+        function escHtml(s){
+          return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+            return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+          });
+        }
+
+        function abrirModalMenu(restaurante, hrefOriginal){
+          var overlay = document.getElementById('cd-menu-overlay');
+          var modal = document.getElementById('cd-modal');
+          modal.innerHTML = '<div class="cd-loading">Cargando menú...</div>';
+          overlay.classList.add('show');
+
+          fetch('/api/restaurantes-publicos/' + encodeURIComponent(restaurante.id) + '/menu')
+            .then(function(r){ return r.json(); })
+            .then(function(d){
+              if(!d.ok){ throw new Error(d.msg || 'error'); }
+              var catsHtml = (d.data || []).map(function(c){
+                var agotados = (c.agotados_hoy && c.agotados_hoy.length)
+                  ? '<div class="cd-cat-agotados">No disponible hoy: ' + escHtml(c.agotados_hoy.join(', ')) + '</div>'
+                  : '';
+                return '<div class="cd-cat">' +
+                  '<div class="cd-cat-nombre">' + escHtml(c.categoria) + '</div>' +
+                  '<div class="cd-cat-desc">' + escHtml(c.descripcion) + '</div>' +
+                  agotados +
+                  '</div>';
+              }).join('');
+              if(!catsHtml) catsHtml = '<p style="opacity:.7;font-size:.88rem">Este restaurante aún no tiene su menú cargado. Escríbeles directo por WhatsApp.</p>';
+
+              modal.innerHTML =
+                '<button class="cd-modal-close" id="cd-modal-close">×</button>' +
+                '<div class="cd-modal-head"><h2>' + escHtml(d.nombre) + '</h2><p>Domicilio: $' + Number(d.costo_domicilio || 0).toLocaleString('es-CO') + '</p></div>' +
+                '<div class="cd-modal-body">' +
+                  catsHtml +
+                  '<label class="cd-textarea-label" for="cd-pedido-texto">Escribe aquí lo que quieres pedir</label>' +
+                  '<textarea class="cd-textarea" id="cd-pedido-texto" placeholder="Ej: 2 hamburguesas dobles y 1 jugo de lulo"></textarea>' +
+                  '<button class="cd-btn-wa" id="cd-btn-enviar">Pedir por WhatsApp</button>' +
+                '</div>';
+
+              document.getElementById('cd-modal-close').onclick = cerrarModal;
+              document.getElementById('cd-btn-enviar').onclick = function(){
+                var texto = document.getElementById('cd-pedido-texto').value.trim();
+                var mensaje = 'Hola, quiero pedir de ' + d.nombre + (texto ? (':\n' + texto) : '');
+                var link = 'https://wa.me/' + (d.whatsapp_numero || '') + '?text=' + encodeURIComponent(mensaje);
+                window.open(link, '_blank');
+                cerrarModal();
+              };
+            })
+            .catch(function(){
+              modal.innerHTML =
+                '<button class="cd-modal-close" id="cd-modal-close">×</button>' +
+                '<div class="cd-modal-body"><div class="cd-error">No se pudo cargar el menú justo ahora.</div>' +
+                '<a class="cd-btn-wa" style="display:block;text-align:center;text-decoration:none;box-sizing:border-box" href="' + hrefOriginal + '" target="_blank">Escribir por WhatsApp de todas formas</a></div>';
+              document.getElementById('cd-modal-close').onclick = cerrarModal;
+            });
+        }
+
+        document.getElementById('cd-menu-overlay').addEventListener('click', function(e){
+          if(e.target.id === 'cd-menu-overlay') cerrarModal();
+        });
+
+        document.addEventListener('click', function(e){
+          var link = e.target.closest && e.target.closest('a[href*="wa.me/"]');
+          if(!link) return;
+          var nombre = extraerNombreDeLink(link.href);
+          if(!nombre) return; // no reconocemos el patrón: dejamos el link original funcionar normal
+
+          e.preventDefault();
+          getRestaurantes().then(function(lista){
+            var match = lista.find(function(r){ return r.nombre.trim().toLowerCase() === nombre.toLowerCase(); });
+            if(!match){ window.open(link.href, '_blank'); return; }
+            abrirModalMenu(match, link.href);
+          }).catch(function(){
+            window.open(link.href, '_blank');
+          });
+        }, true);
+      })();
+    </script>
+
   </body>
 
 </html>
