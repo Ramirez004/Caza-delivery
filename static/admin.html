@@ -133,16 +133,17 @@ tr:hover td{background:var(--surface2)}
     -webkit-overflow-scrolling:touch;
   }
   .sidebar-logo{display:none}
-  .sidebar nav{display:flex;flex-direction:row;gap:4px}
+  .sidebar nav{display:flex;flex-direction:row;gap:0}
   .nav-item{
     flex-direction:column;
-    gap:3px;
-    padding:8px 12px;
+    gap:2px;
+    padding:7px 7px;
     border-left:none;
     border-bottom:3px solid transparent;
     white-space:nowrap;
-    font-size:.7rem;
+    font-size:.62rem;
   }
+  .nav-item .icon{font-size:1rem}
   .nav-item.active{border-left-color:transparent;border-bottom-color:var(--accent)}
   .sidebar>div:last-child{margin-top:0!important;margin-left:auto;white-space:nowrap}
   .main{margin-left:0;padding:16px}
