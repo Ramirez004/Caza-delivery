@@ -55,7 +55,8 @@ RATE_LIMIT_VENTANA_SEG  = 60    # ventana en segundos
 RATE_LIMIT_BLOQUEO_SEG  = 60    # tiempo de bloqueo en segundos
 MAX_CHARS_MENSAJE       = 500   # máximo caracteres por mensaje
 clientes_esperando_decision = {}
-clientes_esperando_calificacion = {}  # numero -> pedido_id
+clientes_esperando_calificacion = {}  # numero -> [pedido_id, ...] (cola: puede haber más de un pedido por calificar)
+clientes_esperando_cual_pedido = {}  # numero -> {"accion": str, "texto": str, "pedidos": [pedido, ...]}
 # Última ubicación de WhatsApp enviada por cada cliente (numero -> texto con link de maps)
 ubicacion_reciente = {}
 cliente_restaurante     = {}
@@ -428,6 +429,72 @@ def buscar_pedido_activo_cliente(numero):
     except Exception:
         traceback.print_exc()
         return p
+
+def resolver_pedido_o_preguntar(numero, accion, texto_original):
+    """Si el cliente tiene un solo pedido activo/preparando, lo devuelve directo.
+    Si tiene varios (ej. uno en cada restaurante), le pregunta cuál y guarda la
+    acción pendiente para cuando responda. Devuelve (pedido, ya_resuelto):
+    - (pedido, True): actúa sobre este pedido ya mismo.
+    - (None, True): no tiene ningún pedido activo.
+    - (None, False): se le preguntó cuál — el llamador solo debe retornar."""
+    activos = get_pedidos_activos(numero)
+    if not activos:
+        return None, True
+    if len(activos) == 1:
+        return activos[0], True
+    opciones_txt = "\n".join(f"{i+1}. #{p['id']} en {p.get('restaurante_nombre') or '—'}" for i, p in enumerate(activos))
+    clientes_esperando_cual_pedido[numero] = {"accion": accion, "texto": texto_original, "pedidos": activos}
+    enviar_whatsapp(numero, f"Tienes varios pedidos activos, ¿cuál? Responde con el número:\n{opciones_txt}")
+    return None, False
+
+def ejecutar_cancelar_pedido(pedido, numero):
+    actualizar_estado_pedido(pedido["id"], "cancelado")
+    enviar_whatsapp(numero, f"❌ Pedido #{pedido['id']} cancelado. ¡Hasta pronto! 🍔")
+    enviar_whatsapp(ADMIN_NUMBER, f"⚠️ Pedido #{pedido['id']} cancelado por +{numero}")
+    r_pedido = get_restaurante(pedido.get("restaurante_id", ""))
+    numero_rest = r_pedido.get("whatsapp_notificacion") if r_pedido else None
+    if numero_rest:
+        enviar_whatsapp(numero_rest,
+            f"❌ *Pedido #{pedido['id']} CANCELADO por el cliente*\n"
+            f"👤 +{numero}\n\n"
+            f"Si ya lo estabas preparando, puedes detenerlo."
+        )
+
+def ejecutar_modificar_pedido(pedido, numero, texto):
+    agregar_modificacion(pedido["id"], texto)
+    enviar_whatsapp(ADMIN_NUMBER, f"📝 Pedido #{pedido['id']} modificado\n+{numero}\n{texto}")
+    r_pedido = get_restaurante(pedido.get("restaurante_id", ""))
+    numero_rest = r_pedido.get("whatsapp_notificacion") if r_pedido else None
+
+    if pedido["estado"] == "activo":
+        # Aún no lo acepta el restaurante: le llega el aviso directo por WhatsApp.
+        if numero_rest:
+            enviar_whatsapp(numero_rest,
+                f"🔄 *Pedido #{pedido['id']} MODIFICADO*\n"
+                f"👤 +{numero}\n"
+                f"────────────────\n"
+                f"{texto}\n"
+                f"────────────────\n"
+                f"👉 Entra a tu panel: {os.getenv('PANEL_URL', '')}/panel-restaurante"
+            )
+        enviar_whatsapp(numero, "✅ Modificación recibida. ¡El equipo lo procesará! 🍔")
+    else:
+        # Ya está "preparando" (aceptado): dejamos la nota por si alcanzan a
+        # verla, pero avisamos al cliente que puede no llegar a tiempo y le
+        # damos el contacto directo del restaurante para hablar con alguien real.
+        if numero_rest:
+            aviso_contacto = f"Si es urgente, escríbeles directo: https://wa.me/{numero_rest}"
+        else:
+            aviso_contacto = "Si es urgente, escribe *encargado* para que te ayude nuestro equipo."
+        enviar_whatsapp(numero,
+            f"⚠️ Tu pedido #{pedido['id']} ya fue aceptado y se está preparando, así que puede que no "
+            f"alcancen a ver este cambio a tiempo. Igual dejamos la nota registrada. {aviso_contacto}"
+        )
+
+def ejecutar_queja_pedido(pedido, numero, texto):
+    agregar_queja(pedido["id"], texto)
+    enviar_whatsapp(numero, "⚠️ Reclamación recibida. Nuestro equipo te contactará pronto. ¡Disculpa! 😟")
+    enviar_whatsapp(ADMIN_NUMBER, f"⚠️ QUEJA #{pedido['id']}\n+{numero}\n{texto}")
 
 # ── HELPERS RESTAURANTES ──────────────────────────────────────────────────────
 
@@ -1722,7 +1789,7 @@ def _aplicar_cambio_estado_pedido(pedido, nuevo):
     if nuevo == "entregado" and anterior != "entregado":
         enviar_whatsapp(numero, f"🙌 *¡Pedido entregado!* Esperamos que lo disfrutes.\n¡Gracias por elegir {nombre_rest}! 😊")
         enviar_whatsapp(numero, "⭐ ¿Cómo calificarías el servicio? Responde del 1 al 5 (puedes agregar un comentario si quieres).")
-        clientes_esperando_calificacion[numero] = pedido_id
+        clientes_esperando_calificacion.setdefault(numero, []).append(pedido_id)
     if nuevo == "cancelado" and anterior != "cancelado":
         enviar_whatsapp(numero, f"❌ *Pedido #{pedido_id} cancelado.*\nSi tienes dudas contáctanos. ¡Hasta pronto! 🍔")
     return {"ok": True}
@@ -2141,7 +2208,7 @@ async def marcar_entregado_dom(request: Request):
             f"¡Gracias por pedir en Ipiales Delivery!")
         enviar_whatsapp(pedido["numero_cliente"],
             "⭐ ¿Cómo calificarías el servicio? Responde del 1 al 5 (puedes agregar un comentario si quieres).")
-        clientes_esperando_calificacion[pedido["numero_cliente"]] = pedido_id
+        clientes_esperando_calificacion.setdefault(pedido["numero_cliente"], []).append(pedido_id)
         enviar_whatsapp(ADMIN_NUMBER,
             f"✅ *Pedido #{pedido_id} entregado*\n🛵 Por: {nombre}")
     # Actualizar contador domiciliario
@@ -2314,17 +2381,40 @@ async def recibir_mensaje(request: Request):
                 return {"status": "ok"}
 
         # ── CALIFICACIÓN DE SERVICIO ───────────────────────────────────────────
-        if numero in clientes_esperando_calificacion:
+        if clientes_esperando_calificacion.get(numero):
             m = re.match(r"^\s*([1-5])(?:\s+(.*))?$", texto.strip(), re.DOTALL)
             if m:
-                pedido_id_cal = clientes_esperando_calificacion.pop(numero)
+                cola = clientes_esperando_calificacion[numero]
+                pedido_id_cal = cola.pop(0)  # el primero que se entregó, primero se califica
+                if not cola:
+                    clientes_esperando_calificacion.pop(numero, None)
                 calificacion = int(m.group(1))
                 comentario = (m.group(2) or "").strip() or None
                 guardar_calificacion(pedido_id_cal, calificacion, comentario)
-                enviar_whatsapp(numero, "¡Gracias por tu calificación! 🙏" + (" Tomamos nota de tu comentario." if comentario else ""))
+                extra = f"\n\nTe queda {len(cola)} pedido(s) más por calificar — responde otro número del 1 al 5 😊" if cola else ""
+                enviar_whatsapp(numero, "¡Gracias por tu calificación! 🙏" + (" Tomamos nota de tu comentario." if comentario else "") + extra)
                 return {"status": "ok"}
             # Si no es un número del 1 al 5, no bloqueamos nada: dejamos la espera
             # activa y el mensaje sigue su flujo normal (ej. el cliente quiere pedir de nuevo).
+
+        # ── RESPONDIENDO "CUÁL PEDIDO" (cancelar/modificar/queja con varios activos) ──
+        if numero in clientes_esperando_cual_pedido:
+            pendiente = clientes_esperando_cual_pedido.pop(numero)
+            m = re.match(r"^\s*(\d+)", texto.strip())
+            idx = int(m.group(1)) - 1 if m else -1
+            opciones = pendiente["pedidos"]
+            if 0 <= idx < len(opciones):
+                pedido_elegido = opciones[idx]
+                accion = pendiente["accion"]
+                if accion == "cancelar":
+                    ejecutar_cancelar_pedido(pedido_elegido, numero)
+                elif accion == "modificar":
+                    ejecutar_modificar_pedido(pedido_elegido, numero, pendiente["texto"])
+                elif accion == "queja":
+                    ejecutar_queja_pedido(pedido_elegido, numero, pendiente["texto"])
+            else:
+                enviar_whatsapp(numero, "No entendí cuál pedido — escribe de nuevo el comando (cancelar pedido / modificar pedido / queja) cuando quieras intentarlo otra vez.")
+            return {"status": "ok"}
 
         # ── REGISTRO DE CLIENTE ───────────────────────────────────────────────
         if numero in clientes_registrando:
@@ -2493,31 +2583,31 @@ async def recibir_mensaje(request: Request):
         if not saltar_palabras_clave:
 
             if any(p in texto_lower for p in ["cancelar pedido", "eliminar pedido", "quiero cancelar"]):
-                pedido = buscar_pedido_activo_cliente(numero)
+                pedido, resuelto = resolver_pedido_o_preguntar(numero, "cancelar", texto)
+                if not resuelto:
+                    return {"status": "ok"}  # se le preguntó cuál pedido, esperando respuesta
                 if pedido:
-                    actualizar_estado_pedido(pedido["id"], "cancelado")
-                    enviar_whatsapp(numero, f"❌ Pedido #{pedido['id']} cancelado. ¡Hasta pronto! 🍔")
-                    enviar_whatsapp(ADMIN_NUMBER, f"⚠️ Pedido #{pedido['id']} cancelado por +{numero}")
+                    ejecutar_cancelar_pedido(pedido, numero)
                 else:
                     enviar_whatsapp(numero, "No encontramos un pedido activo para cancelar.")
                 return {"status": "ok"}
 
             if any(p in texto_lower for p in ["modificar pedido", "cambiar pedido", "agregar algo"]):
-                pedido = buscar_pedido_activo_cliente(numero)
+                pedido, resuelto = resolver_pedido_o_preguntar(numero, "modificar", texto)
+                if not resuelto:
+                    return {"status": "ok"}
                 if pedido:
-                    agregar_modificacion(pedido["id"], texto)
-                    enviar_whatsapp(numero, "✅ Modificación recibida. ¡El equipo lo procesará! 🍔")
-                    enviar_whatsapp(ADMIN_NUMBER, f"📝 Pedido #{pedido['id']} modificado\n+{numero}\n{texto}")
+                    ejecutar_modificar_pedido(pedido, numero, texto)
                 else:
                     enviar_whatsapp(numero, "No encontramos un pedido activo.")
                 return {"status": "ok"}
 
             if any(p in texto_lower for p in ["queja", "reclamación", "problema con mi pedido", "está mal"]):
-                pedido = buscar_pedido_activo_cliente(numero)
+                pedido, resuelto = resolver_pedido_o_preguntar(numero, "queja", texto)
+                if not resuelto:
+                    return {"status": "ok"}
                 if pedido:
-                    agregar_queja(pedido["id"], texto)
-                    enviar_whatsapp(numero, "⚠️ Reclamación recibida. Nuestro equipo te contactará pronto. ¡Disculpa! 😟")
-                    enviar_whatsapp(ADMIN_NUMBER, f"⚠️ QUEJA #{pedido['id']}\n+{numero}\n{texto}")
+                    ejecutar_queja_pedido(pedido, numero, texto)
                 else:
                     enviar_whatsapp(numero, "Cuéntanos qué pasó 😊")
                 return {"status": "ok"}
