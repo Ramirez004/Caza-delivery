@@ -2856,6 +2856,8 @@ async def menu_publico(rest_id: str):
         "nombre": r["nombre"],
         "costo_domicilio": costo_domicilio(r),
         "whatsapp_numero": WHATSAPP_MAIN_NUMBER,
+        "menu_modo": r.get("menu_modo") or "texto",
+        "menu_url": r.get("menu_url") or "",
         "data": data,
     }
 
