@@ -2832,6 +2832,33 @@ async def restaurantes_publicos():
         traceback.print_exc()
         return {"ok": False, "msg": str(e)}
 
+@app.get("/api/restaurantes-publicos/{rest_id}/menu")
+async def menu_publico(rest_id: str):
+    """Menú de un restaurante para mostrar en la landing pública (sin login).
+    Devuelve solo categorías activas y no ocultas hoy, con los productos
+    agotados de hoy marcados aparte (no mezclados en el texto)."""
+    r = get_restaurante(rest_id)
+    if not r or not r.get("activo", True):
+        return {"ok": False, "msg": "Restaurante no encontrado"}
+    extra = _estado_extra.get(rest_id, {})
+    desact = extra.get("categorias_desactivadas", set())
+    items = get_menu(rest_id)
+    data = [
+        {
+            "categoria": i["categoria"],
+            "descripcion": i["descripcion"],
+            "agotados_hoy": i.get("productos_agotados") or [],
+        }
+        for i in items if i["activo"] and i["categoria"] not in desact
+    ]
+    return {
+        "ok": True,
+        "nombre": r["nombre"],
+        "costo_domicilio": costo_domicilio(r),
+        "whatsapp_numero": WHATSAPP_MAIN_NUMBER,
+        "data": data,
+    }
+
 # ── APIs ADMIN: MENÚ ──────────────────────────────────────────────────────────
 
 @app.get("/api/admin/menu/{rest_id}")
