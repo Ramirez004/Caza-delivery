@@ -1775,7 +1775,7 @@
         const estadoOk = c.activo && !agotado;
         return `<tr>
           <td><strong>${esc(c.codigo)}</strong></td>
-          <td>${fmtDescuentoRest(c)}</td>
+          <td>${fmtDescuentoRest(c)}${c.monto_minimo > 0 ? `<br><span style="font-size:.72rem;color:var(--text3)">mín. $${Number(c.monto_minimo).toLocaleString('es-CO')}</span>` : ''}</td>
           <td>${c.usos_restantes} / ${c.usos_totales}</td>
           <td><span class="badge ${estadoOk ? 'badge-success' : 'badge-danger'}">${estadoOk ? 'Activo' : (agotado ? 'Agotado' : 'Inactivo')}</span></td>
           <td><button class="btn btn-ghost btn-sm" onclick="eliminarCodigoRest(${c.id})">Eliminar</button></td>
@@ -1796,6 +1796,7 @@
         </div>
         <div class="form-group"><label>Valor</label><input id="fr-cod-valor" type="number" min="0" value="10"></div>
         <div class="form-group"><label>Usos totales disponibles</label><input id="fr-cod-usos" type="number" min="1" value="50"></div>
+        <div class="form-group"><label>Monto mínimo de compra (opcional)</label><input id="fr-cod-minimo" type="number" min="0" value="0" placeholder="0 = sin mínimo"></div>
         <div class="modal-btns">
           <button class="btn btn-secondary" onclick="cerrarModalCodigoRest()">Cancelar</button>
           <button class="btn btn-primary" onclick="guardarCodigoRest()">Guardar</button>
@@ -1811,6 +1812,7 @@
         tipo: document.getElementById('fr-cod-tipo').value,
         valor: parseFloat(document.getElementById('fr-cod-valor').value) || 0,
         usos_totales: parseInt(document.getElementById('fr-cod-usos').value) || 1,
+        monto_minimo: parseFloat(document.getElementById('fr-cod-minimo').value) || 0,
       };
       if(!datos.codigo){ toast('El código es obligatorio', 'error'); return; }
       const r = await fetch('/api/restaurante-panel/codigos', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(datos)});

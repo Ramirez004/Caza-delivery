@@ -746,7 +746,7 @@ async function cargarCodigos() {
     <tr>
       <td><strong>${esc(c.codigo)}</strong></td>
       <td style="font-size:.8rem;color:var(--text2)">${aplica}</td>
-      <td>${fmtDescuento(c)}</td>
+      <td>${fmtDescuento(c)}${c.monto_minimo > 0 ? `<br><span style="font-size:.72rem;color:var(--text3)">mín. $${Number(c.monto_minimo).toLocaleString("es-CO")}</span>` : ""}</td>
       <td style="font-size:.8rem">${c.usos_restantes} / ${c.usos_totales}</td>
       <td><span class="badge ${c.activo && !agotado ? "badge-green" : "badge-red"}">${c.activo && !agotado ? "Activo" : (agotado ? "Agotado" : "Inactivo")}</span></td>
       <td>
@@ -780,6 +780,7 @@ function abrirModalCodigo(c) {
     </div>
     <div class="form-group"><label>Valor</label><input id="f-cod-valor" type="number" min="0" value="${c?.valor??10}" placeholder="10"></div>
     <div class="form-group"><label>Usos totales disponibles</label><input id="f-cod-usos" type="number" min="1" value="${c?.usos_totales??50}"></div>
+    <div class="form-group"><label>Monto mínimo de compra (opcional)</label><input id="f-cod-minimo" type="number" min="0" value="${c?.monto_minimo??0}" placeholder="0 = sin mínimo"></div>
     <div class="modal-btns">
       <button class="btn btn-ghost" onclick="cerrarModal()">Cancelar</button>
       <button class="btn btn-primary" onclick="guardarCodigo(${esEditar}, ${c?.id||"null"})">Guardar</button>
@@ -795,6 +796,7 @@ async function guardarCodigo(esEditar, id) {
     tipo: document.getElementById("f-cod-tipo").value,
     valor: parseFloat(document.getElementById("f-cod-valor").value) || 0,
     usos_totales: parseInt(document.getElementById("f-cod-usos").value) || 1,
+    monto_minimo: parseFloat(document.getElementById("f-cod-minimo").value) || 0,
   };
   let d;
   if (esEditar) {
