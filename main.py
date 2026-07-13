@@ -619,7 +619,19 @@ def buscar_codigo_descuento(codigo_texto):
         traceback.print_exc()
         return None
 
-def validar_codigo_descuento(codigo_texto, rest_key):
+def cliente_ya_uso_codigo(numero, codigo_texto):
+    """Revisa el historial de pedidos del cliente para ver si ya usó este código
+    antes (en cualquier restaurante), sin necesitar una tabla aparte. No cuenta
+    pedidos cancelados, porque ahí el cliente no llegó a beneficiarse de verdad."""
+    try:
+        res = supabase.table("pedidos").select("id,estado,codigo_descuento")\
+            .eq("numero_cliente", numero).ilike("codigo_descuento", codigo_texto).execute()
+        return any(p.get("estado") != "cancelado" for p in (res.data or []))
+    except Exception:
+        traceback.print_exc()
+        return False
+
+def validar_codigo_descuento(codigo_texto, rest_key, numero=None):
     """Valida que un código se pueda usar ahora mismo en este restaurante.
     Devuelve (fila, None) si es válido, o (None, mensaje_error) si no."""
     fila = buscar_codigo_descuento(codigo_texto)
@@ -641,6 +653,8 @@ def validar_codigo_descuento(codigo_texto, rest_key):
     # restaurante_id vacío/null = código de Caza Delivery, válido en cualquier restaurante
     if fila.get("restaurante_id") and fila["restaurante_id"] != rest_key:
         return None, "Ese código no aplica para este restaurante."
+    if numero and cliente_ya_uso_codigo(numero, fila["codigo"]):
+        return None, "Ya usaste este código antes — cada código solo se puede usar una vez por cliente."
     return fila, None
 
 def descripcion_descuento(fila):
@@ -710,13 +724,18 @@ def build_system_prompt(rest_key, cliente=None, descuento=None):
     metodos_pago = metodos_pago_texto(r)
 
     descuento_txt = ""
-    instr_descuento = ""
     if descuento:
         descuento_txt = f"\nDESCUENTO ACTIVO: {descripcion_descuento(descuento)} (código {descuento['codigo']})."
         instr_descuento = (
             "\n- El cliente ya tiene un código de descuento validado (ver DESCUENTO ACTIVO arriba). Aplícalo al "
             "total del pedido antes de mostrar el resumen final, y muestra en el resumen tanto el subtotal como "
             "el descuento y el total ya con el descuento aplicado."
+        )
+    else:
+        instr_descuento = (
+            "\n- Antes de mostrar el resumen final, pregúntale al cliente si tiene algún código de descuento o "
+            "promocional (ej: \"¿Tienes algún código de descuento? Si tienes uno, escríbeme: código TUCODIGO\"). "
+            "Si dice que no tiene, sigue normal sin insistir más."
         )
 
     return f"""Eres el asistente virtual de *{r['nombre']}*, en {r['direccion']}, Ipiales.
@@ -2781,7 +2800,7 @@ async def recibir_mensaje(request: Request):
             m_codigo = re.search(r"c[oó]digo\s*:?\s*([a-zA-Z0-9_-]{3,20})", texto, re.IGNORECASE)
             if m_codigo:
                 codigo_texto = m_codigo.group(1).upper()
-                fila, error = validar_codigo_descuento(codigo_texto, rest_key)
+                fila, error = validar_codigo_descuento(codigo_texto, rest_key, numero)
                 if fila:
                     codigo_aplicado[numero] = fila
                     enviar_whatsapp(numero, f"✅ Código *{codigo_texto}* aplicado: {descripcion_descuento(fila)}. Se descontará de tu total al confirmar el pedido.")
