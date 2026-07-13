@@ -359,13 +359,13 @@ def crear_pedido(numero, resumen, confirmacion_bot, rest_key, datos_estructurado
             "fecha": ahora.isoformat(),
         }
         # Solo tocamos codigo_descuento si hay uno nuevo por guardar — así no
-        # borramos uno ya reservado si el cliente sigue editando el mismo pedido.
-        # OJO: el código se RESERVA aquí (queda anotado en el pedido) pero el uso
-        # se descuenta del contador solo cuando el pedido se entrega de verdad
-        # (ver consumir_codigo_si_aplica) — así si el pedido se cancela, el
-        # código sigue disponible en vez de haberse quemado por nada.
+        # volvemos a descontar un uso si el cliente sigue editando el mismo pedido.
+        # El uso se descuenta AHORA (al confirmarse), no al entregarse, para topar
+        # bien cuántos pedidos pueden reservar el código a la vez. Si el pedido se
+        # cancela después, se le devuelve el uso (ver restaurar_uso_codigo_si_aplica).
         if codigo_texto_usado and not pedido_para_actualizar.get("codigo_descuento"):
             datos_actualizar["codigo_descuento"] = codigo_texto_usado
+            consumir_uso_codigo(codigo_fila)
             codigo_aplicado.pop(numero, None)
         supabase.table("pedidos").update(datos_actualizar).eq("id", pedido_id).execute()
         return get_pedido_by_id(pedido_id), False
@@ -391,8 +391,7 @@ def crear_pedido(numero, resumen, confirmacion_bot, rest_key, datos_estructurado
     }
     supabase.table("pedidos").insert(pedido).execute()
     if codigo_fila:
-        # Se reserva (queda anotado en el pedido), pero el uso se descuenta del
-        # contador solo cuando el pedido llegue a "entregado" de verdad.
+        consumir_uso_codigo(codigo_fila)
         codigo_aplicado.pop(numero, None)
     return pedido, True
 
@@ -471,6 +470,7 @@ def ejecutar_cancelar_pedido(pedido, numero):
     actualizar_estado_pedido(pedido["id"], "cancelado")
     enviar_whatsapp(numero, f"❌ Pedido #{pedido['id']} cancelado. ¡Hasta pronto! 🍔")
     enviar_whatsapp(ADMIN_NUMBER, f"⚠️ Pedido #{pedido['id']} cancelado por +{numero}")
+    restaurar_uso_codigo_si_aplica(pedido)
     r_pedido = get_restaurante(pedido.get("restaurante_id", ""))
     numero_rest = r_pedido.get("whatsapp_notificacion") if r_pedido else None
     if numero_rest:
@@ -661,16 +661,27 @@ def validar_codigo_descuento(codigo_texto, rest_key, numero=None):
         return None, "Ya usaste este código antes — cada código solo se puede usar una vez por cliente."
     return fila, None
 
-def consumir_codigo_si_aplica(pedido):
-    """Al completarse de verdad un pedido (entregado), se resta el uso del
-    código de descuento que tenía reservado, si tenía alguno. Si el pedido se
-    cancela en cambio, esto nunca se llama y el código sigue disponible."""
+def restaurar_uso_codigo_si_aplica(pedido):
+    """Si un pedido con código de descuento se cancela, se le devuelve el uso
+    al código (no se debe perder un uso por un pedido que no se completó).
+    El uso se había descontado ya al confirmarse el pedido (ver crear_pedido) —
+    no al entregarse — precisamente para que dos clientes no puedan reservar
+    a la vez el último uso de un código antes de que ninguno se entregue."""
     codigo_texto = pedido.get("codigo_descuento")
     if not codigo_texto:
         return
     fila = buscar_codigo_descuento(codigo_texto)
-    if fila:
-        consumir_uso_codigo(fila)
+    if not fila:
+        return
+    try:
+        totales = fila.get("usos_totales") or 0
+        restantes = min((fila.get("usos_restantes") or 0) + 1, totales) if totales else (fila.get("usos_restantes") or 0) + 1
+        datos = {"usos_restantes": restantes}
+        if restantes > 0:
+            datos["activo"] = True  # si se había agotado por este mismo pedido, vuelve a estar disponible
+        supabase.table("codigos_descuento").update(datos).eq("id", fila["id"]).execute()
+    except Exception:
+        traceback.print_exc()
 
 def descripcion_descuento(fila):
     valor = fila.get("valor", 0)
@@ -1928,9 +1939,9 @@ def _aplicar_cambio_estado_pedido(pedido, nuevo):
         enviar_whatsapp(numero, f"🙌 *¡Pedido entregado!* Esperamos que lo disfrutes.\n¡Gracias por elegir {nombre_rest}! 😊")
         enviar_whatsapp(numero, "⭐ ¿Cómo calificarías el servicio? Responde del 1 al 5 (puedes agregar un comentario si quieres).")
         clientes_esperando_calificacion.setdefault(numero, []).append(pedido_id)
-        consumir_codigo_si_aplica(pedido)
     if nuevo == "cancelado" and anterior != "cancelado":
         enviar_whatsapp(numero, f"❌ *Pedido #{pedido_id} cancelado.*\nSi tienes dudas contáctanos. ¡Hasta pronto! 🍔")
+        restaurar_uso_codigo_si_aplica(pedido)
     return {"ok": True}
 
 def _iniciar_busqueda_domiciliario(pedido):
@@ -2437,7 +2448,6 @@ async def marcar_entregado_dom(request: Request):
     enviar_whatsapp(pedido["numero_cliente"],
         "⭐ ¿Cómo calificarías el servicio? Responde del 1 al 5 (puedes agregar un comentario si quieres).")
     clientes_esperando_calificacion.setdefault(pedido["numero_cliente"], []).append(pedido_id)
-    consumir_codigo_si_aplica(pedido)
     enviar_whatsapp(ADMIN_NUMBER,
         f"✅ *Pedido #{pedido_id} entregado*\n🛵 Por: {nombre}")
     # Actualizar contador domiciliario
@@ -2711,6 +2721,7 @@ async def recibir_mensaje(request: Request):
         ]):
             cliente_restaurante.pop(numero, None)
             historial.pop(numero, None)
+            codigo_aplicado.pop(numero, None)  # un código de otro restaurante no debe seguir activo aquí
             clientes_eligiendo[numero] = True
             enviar_whatsapp(numero, lista_restaurantes())
             return {"status": "ok"}
@@ -2773,6 +2784,7 @@ async def recibir_mensaje(request: Request):
             # El restaurante ya no existe (fue eliminado o cambiado de ID) - evita el crash
             cliente_restaurante.pop(numero, None)
             historial.pop(numero, None)
+            codigo_aplicado.pop(numero, None)
             clientes_eligiendo[numero] = True
             enviar_whatsapp(numero, "😔 Ese restaurante ya no está disponible.\n\n" + lista_restaurantes())
             return {"status": "ok"}
@@ -2780,6 +2792,7 @@ async def recibir_mensaje(request: Request):
         if not esta_abierto(rest_key) and numero != ADMIN_NUMBER:
             enviar_whatsapp(numero, f"😔 *{r_actual['nombre']}* cerró. Horario: {r_actual['hora_inicio']}:00–{r_actual['hora_fin']}:00. ¡Hasta mañana! 🙏")
             cliente_restaurante.pop(numero, None)
+            codigo_aplicado.pop(numero, None)
             return {"status": "ok"}
 
         # ── RESPONDIENDO "MODIFICAR O NUEVO" ──────────────────────────────────
@@ -2846,16 +2859,28 @@ async def recibir_mensaje(request: Request):
                 enviar_whatsapp(numero, "¿Qué te gustaría pedir? 😊")
                 return {"status": "ok"}
 
-            m_codigo = re.search(r"c[oó]digo\s*:?\s*([a-zA-Z0-9_-]{3,20})", texto, re.IGNORECASE)
-            if m_codigo:
-                codigo_texto = m_codigo.group(1).upper()
-                fila, error = validar_codigo_descuento(codigo_texto, rest_key, numero)
-                if fila:
-                    codigo_aplicado[numero] = fila
-                    enviar_whatsapp(numero, f"✅ Código *{codigo_texto}* aplicado: {descripcion_descuento(fila)}. Se descontará de tu total al confirmar el pedido.")
-                else:
-                    enviar_whatsapp(numero, f"❌ {error}")
-                return {"status": "ok"}
+            m_kw_codigo = re.search(r"c[oó]digo", texto, re.IGNORECASE)
+            if m_kw_codigo:
+                # Buscamos el primer token "tipo código" DESPUÉS de la palabra "código",
+                # ignorando palabras de relleno comunes (así reconoce frases naturales
+                # como "el código es FRISBY20", no solo "código: FRISBY20" pegado).
+                palabras_relleno = {
+                    "es", "de", "un", "una", "tengo", "mi", "el", "la", "para", "descuento",
+                    "promocional", "promo", "tiene", "dame", "seria", "sería", "uso", "usar", "codigo", "código",
+                }
+                codigo_texto = None
+                for tok in re.findall(r"[a-zA-Z0-9_-]{3,20}", texto[m_kw_codigo.end():]):
+                    if tok.lower() not in palabras_relleno:
+                        codigo_texto = tok.upper()
+                        break
+                if codigo_texto:
+                    fila, error = validar_codigo_descuento(codigo_texto, rest_key, numero)
+                    if fila:
+                        codigo_aplicado[numero] = fila
+                        enviar_whatsapp(numero, f"✅ Código *{codigo_texto}* aplicado: {descripcion_descuento(fila)}. Se descontará de tu total al confirmar el pedido.")
+                    else:
+                        enviar_whatsapp(numero, f"❌ {error}")
+                    return {"status": "ok"}
 
             if any(p in texto_lower for p in ["ayuda", "help"]):
                 enviar_whatsapp(numero,
@@ -2920,11 +2945,18 @@ async def recibir_mensaje(request: Request):
             historial[numero] = []
         historial[numero].append({"role": "user", "content": texto})
 
+        # Defensa extra: un código reservado para OTRO restaurante nunca debe
+        # colarse aquí, sin importar por dónde haya quedado guardado.
+        _descuento_actual = codigo_aplicado.get(numero)
+        if _descuento_actual and _descuento_actual.get("restaurante_id") and _descuento_actual["restaurante_id"] != rest_key:
+            codigo_aplicado.pop(numero, None)
+            _descuento_actual = None
+
         ai = anthropic.Anthropic(api_key=CLAUDE_KEY)
         resp = ai.messages.create(
             model="claude-sonnet-4-6",
             max_tokens=600,
-            system=build_system_prompt(rest_key, cliente, codigo_aplicado.get(numero)),
+            system=build_system_prompt(rest_key, cliente, _descuento_actual),
             messages=historial[numero],
         )
         texto_respuesta = resp.content[0].text
