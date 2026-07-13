@@ -485,6 +485,43 @@ def metodos_pago_texto(r):
         partes.append(f"Bre-B / llave ({bre_b})")
     return ", ".join(partes)
 
+def costo_domicilio(r):
+    """Valor del domicilio configurado por el restaurante en el panel admin
+    (mismo número que paga el cliente y que gana el domiciliario por la entrega).
+    Si no se configuró, usa $3.000 por defecto."""
+    try:
+        return int(r.get("costo_domicilio") or 3000) if r else 3000
+    except (ValueError, TypeError):
+        return 3000
+
+def calcular_ganancias_dom(dom_id):
+    """Suma el costo_domicilio de cada pedido ENTREGADO por este domiciliario,
+    hoy y en los últimos 7 días (para mostrarle cuánto ha ganado)."""
+    ahora = datetime.now(ZONA_HORARIA)
+    hoy_str = ahora.date().isoformat()
+    hace_7_dias = (ahora - timedelta(days=7)).isoformat()
+    try:
+        res = supabase.table("asignaciones").select("pedido_id")\
+            .eq("domiciliario_id", dom_id).gte("fecha", hace_7_dias).execute()
+        ids = [a["pedido_id"] for a in (res.data or [])]
+    except Exception:
+        return {"ganancia_hoy": 0, "ganancia_semana": 0}
+    ganancia_hoy = 0
+    ganancia_semana = 0
+    for pid in ids:
+        p = get_pedido_by_id(pid)
+        if not p or p.get("estado") != "entregado":
+            continue
+        valor = costo_domicilio(get_restaurante(p.get("restaurante_id", "")))
+        ganancia_semana += valor
+        try:
+            fecha_pedido = datetime.fromisoformat(p["fecha"]).astimezone(ZONA_HORARIA).date().isoformat()
+        except Exception:
+            fecha_pedido = None
+        if fecha_pedido == hoy_str:
+            ganancia_hoy += valor
+    return {"ganancia_hoy": ganancia_hoy, "ganancia_semana": ganancia_semana}
+
 def lista_restaurantes():
     lineas = ["🍽️ *Bienvenido a Ipiales Delivery*\n\nElige un restaurante:\n"]
     for i, (key, r) in enumerate(_cache_restaurantes.items(), 1):
@@ -509,7 +546,7 @@ def build_system_prompt(rest_key, cliente=None):
     hay_bebidas = any("bebida" in normalizar_texto(i["categoria"]) for i in menu_activo_items)
     notas = ("\nNOTAS DE HOY:\n- " + "\n- ".join(extra["notas"])) if extra.get("notas") else ""
     espera = f"\nTIEMPO DE ESPERA: {extra['tiempo_espera']} minutos." if extra.get("tiempo_espera") else ""
-    dom = "Sí. Costo: $3.000." if extra.get("domicilio_activo", True) else "No disponible."
+    dom = f"Sí. Costo: ${costo_domicilio(r):,}.".replace(",", ".") if extra.get("domicilio_activo", True) else "No disponible."
 
     saludo = ""
     instr_direccion_guardada = (
@@ -609,7 +646,7 @@ def enviar_menu_texto(numero, rest_key):
         lineas.append("\n📝 *Notas de hoy:*")
         for nota in extra["notas"]:
             lineas.append(f"- {nota}")
-    dom = "Sí, costo $3.000" if extra.get("domicilio_activo", True) else "No disponible"
+    dom = f"Sí, costo ${costo_domicilio(r):,}".replace(",", ".") if extra.get("domicilio_activo", True) else "No disponible"
     lineas.append(f"\n🛵 *Domicilio:* {dom}")
     lineas.append(f"💳 *Pago:* {metodos_pago_texto(r)}")
     enviar_whatsapp(numero, "\n\n".join(lineas))
@@ -836,15 +873,14 @@ def procesar_mensaje_domiciliario(numero, texto):
             f"🛵 *Comandos disponibles {dom['nombre']}:*\n\n"
             f"• *entro turno* → activarte para recibir pedidos\n"
             f"• *salgo turno* → desactivarte\n\n"
-            f"Estado actual: {'✅ En turno' if dom.get('disponible') else '❌ Fuera de turno'}"
+            f"Estado actual: {'✅ En turno' if dom.get('disponible') else '❌ Fuera de turno'}\n\n"
+            f"También puedes pedir comida normalmente (ej. \"restaurantes\") con este mismo número 😊"
         )
 
-    # Si es domiciliario pero no es un comando conocido,
-    # responde brevemente sin pasar por Claude
-    if dom.get("disponible"):
-        return f"Hola {dom['nombre']} 😊 Estás en turno. Escribe *salgo turno* si quieres desactivarte."
-    else:
-        return f"Hola {dom['nombre']} 😊 Estás fuera de turno. Escribe *entro turno* para activarte."
+    # No es un comando de turno conocido: puede ser que el domiciliario quiera
+    # pedir comida para él mismo, así que se deja pasar al flujo normal de cliente
+    # (elegir restaurante, menú, Claude) en vez de responder siempre lo mismo.
+    return None
 
 def pedido_ya_asignado(pedido_id):
     try:
@@ -890,6 +926,8 @@ def notificar_domiciliarios_whatsapp(pedido):
         return
     cli = get_cliente(pedido.get("numero_cliente", ""))
     nombre_cliente = cli.get("nombre", "") if cli else ""
+    r = get_restaurante(pedido.get("restaurante_id", ""))
+    ganancia = f"${costo_domicilio(r):,}".replace(",", ".")
     for dom in doms:
         msg = (
             f"🛵 *¡Pedido nuevo #{pedido['id']}!*\n"
@@ -899,7 +937,7 @@ def notificar_domiciliarios_whatsapp(pedido):
             f"────────────────\n"
             f"{pedido.get('resumen', '')}\n"
             f"────────────────\n"
-            f"💰 Ganancia: $5.000\n\n"
+            f"💰 Ganancia: {ganancia}\n\n"
             f"👉 Abre la app para aceptar:\n"
             f"{os.getenv('PANEL_URL', '')}/domiciliarios"
         )
@@ -1745,26 +1783,29 @@ async def pedidos_pendientes(dom_id: str = "", token: str = ""):
     dom = verificar_sesion_dom(dom_id, token)
     if not dom:
         return {"pedido": None, "pedidos": [], "stats": {}, "disponible": False}
+    # Las estadísticas (entregas y ganancias) se calculan siempre, esté o no
+    # en turno — un domiciliario desconectado también quiere ver lo que lleva ganado.
+    ganancias = calcular_ganancias_dom(dom["id"])
+    try:
+        hoy = date.today().isoformat()
+        res = supabase.table("asignaciones").select("*")            .eq("domiciliario_id", dom["id"])            .gte("fecha", hoy).execute()
+        pedidos_hoy = len(res.data or [])
+    except Exception:
+        pedidos_hoy = 0
+    stats = {"pedidos_hoy": pedidos_hoy, **ganancias}
     if not dom.get("disponible"):
-        return {"pedido": None, "pedidos": [], "stats": {}, "disponible": False}
+        return {"pedido": None, "pedidos": [], "stats": stats, "disponible": False}
     # Pedidos esperando domiciliario, directo desde la BD (sobrevive reinicios,
     # excluye cancelados/asignados, y muestra todos — no solo el primero)
     disponibles = get_pedidos_sin_asignar()
     for p in disponibles:
         cli = get_cliente(p.get("numero_cliente", ""))
         p["cliente_nombre"] = cli.get("nombre", "") if cli else ""
-    # Stats del día
-    try:
-        from datetime import date
-        hoy = date.today().isoformat()
-        res = supabase.table("asignaciones").select("*")            .eq("domiciliario_id", dom["id"])            .gte("fecha", hoy).execute()
-        pedidos_hoy = len(res.data or [])
-    except Exception:
-        pedidos_hoy = 0
+        p["costo_domicilio"] = costo_domicilio(get_restaurante(p.get("restaurante_id", "")))
     return {
         "pedido": disponibles[0] if disponibles else None,  # compatibilidad con app vieja
         "pedidos": disponibles,
-        "stats": {"pedidos_hoy": pedidos_hoy},
+        "stats": stats,
         "disponible": True,
     }
 
@@ -1869,6 +1910,7 @@ async def mis_pedidos_dom(dom_id: str = "", token: str = ""):
             if p and p["estado"] in ["preparando", "enviado"]:
                 cli = get_cliente(p.get("numero_cliente", ""))
                 p["cliente_nombre"] = cli.get("nombre", "") if cli else ""
+                p["costo_domicilio"] = costo_domicilio(get_restaurante(p.get("restaurante_id", "")))
                 pedidos.append(p)
         from datetime import date
         hoy = date.today().isoformat()
@@ -1877,6 +1919,31 @@ async def mis_pedidos_dom(dom_id: str = "", token: str = ""):
     except Exception:
         traceback.print_exc()
         return {"pedidos": [], "stats": {}}
+
+@app.get("/api/domiciliario/historial")
+async def historial_dom(dom_id: str = "", token: str = ""):
+    """Últimas entregas completadas de este domiciliario, para que pueda
+    ver cuánto ha entregado y ganado en días anteriores (no solo hoy)."""
+    dom = verificar_sesion_dom(dom_id, token)
+    if not dom:
+        return {"pedidos": []}
+    try:
+        res = supabase.table("asignaciones").select("pedido_id")\
+            .eq("domiciliario_id", dom["id"]).order("fecha", desc=True).limit(100).execute()
+        ids = [a["pedido_id"] for a in (res.data or [])]
+        entregados = []
+        for pid in ids:
+            p = get_pedido_by_id(pid)
+            if p and p.get("estado") == "entregado":
+                cli = get_cliente(p.get("numero_cliente", ""))
+                p["cliente_nombre"] = cli.get("nombre", "") if cli else ""
+                p["costo_domicilio"] = costo_domicilio(get_restaurante(p.get("restaurante_id", "")))
+                entregados.append(p)
+        entregados.sort(key=lambda p: p.get("fecha", ""), reverse=True)
+        return {"pedidos": entregados[:30]}
+    except Exception:
+        traceback.print_exc()
+        return {"pedidos": []}
 
 @app.get("/webhook")
 async def verificar_webhook(request: Request):
@@ -2419,6 +2486,7 @@ async def admin_crear_restaurante(request: Request):
             "logo_url": body.get("logo_url", ""),
             "nequi_numero": body.get("nequi_numero", ""),
             "llave_bre_b": body.get("llave_bre_b", ""),
+            "costo_domicilio": int(body.get("costo_domicilio") or 3000),
         }
         supabase.table("restaurantes").insert(r).execute()
         cargar_restaurantes()
