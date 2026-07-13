@@ -2692,18 +2692,64 @@ async def admin_panel(request: Request):
             return HTMLResponse(f.read())
     return HTMLResponse("""<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Admin — Ipiales Delivery</title>
-<style>*{box-sizing:border-box}body{background:#0f0f0f;font-family:'Segoe UI',sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;color:#fff}
-.box{background:#1a1a1a;border:1px solid #333;padding:32px 28px;border-radius:16px;text-align:center;width:90%;max-width:340px}
-h1{font-size:1.3rem;margin-bottom:4px}h1 span{color:#FFC107}p{color:#888;margin-bottom:20px;font-size:.87rem}
-input{width:100%;padding:12px;background:#222;border:1px solid #444;border-radius:10px;color:#fff;font-size:1rem;outline:none;margin-bottom:12px}
-input:focus{border-color:#FFC107}button{width:100%;padding:12px;background:#FFC107;border:none;border-radius:10px;color:#1a1a1a;font-weight:700;font-size:1rem;cursor:pointer}
-.err{color:#f44336;font-size:.82rem;margin:-6px 0 12px;display:none}
-</style></head><body><div class="box"><h1>⚙️ ADMIN <span>PANEL</span></h1><p>Ipiales Delivery</p>
-<form id="form-login"><input type="password" id="pw" placeholder="Contraseña admin" autofocus>
-<div class="err" id="err">Contraseña incorrecta</div>
-<button type="submit">Entrar</button></form></div>
+<title>Admin — Caza Delivery</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#f8f9fa;--surface:#ffffff;--border:#e0e4e8;--text:#1f2937;--text2:#6b7280;
+  --accent:#2563eb;--accent2:#1d4ed8;--accent-ring:rgba(37,99,235,.15);--red:#ef4444;
+}
+:root[data-theme="dark"]{
+  --bg:#0f1419;--surface:#171d24;--border:#2a2f37;--text:#e8e8e8;--text2:#94a3b8;--red:#f28b8b;
+}
+@media(prefers-color-scheme:dark){
+  :root:not([data-theme="light"]):not([data-theme="dark"]){
+    --bg:#0f1419;--surface:#171d24;--border:#2a2f37;--text:#e8e8e8;--text2:#94a3b8;--red:#f28b8b;
+  }
+}
+body{background:var(--bg);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;color:var(--text);transition:background .2s ease,color .2s ease}
+.box{background:var(--surface);border:1px solid var(--border);box-shadow:0 10px 15px -3px rgba(0,0,0,.1);padding:32px 28px;border-radius:16px;text-align:center;width:90%;max-width:340px}
+.logo{width:48px;height:48px;margin:0 auto 14px;background:linear-gradient(135deg,var(--accent) 0%,var(--accent2) 100%);border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700;color:#fff}
+h1{font-size:1.2rem;margin-bottom:4px;font-weight:700}
+h1 span{background:linear-gradient(135deg,var(--accent) 0%,var(--accent2) 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+p{color:var(--text2);margin-bottom:20px;font-size:.87rem}
+input{width:100%;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:1rem;outline:none;margin-bottom:12px;font-family:inherit}
+input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-ring)}
+button{width:100%;padding:12px;background:linear-gradient(135deg,var(--accent) 0%,var(--accent2) 100%);border:none;border-radius:10px;color:#fff;font-weight:700;font-size:1rem;cursor:pointer;transition:filter .15s ease}
+button:hover{filter:brightness(1.08)}
+.err{color:var(--red);font-size:.82rem;margin:-6px 0 12px;display:none}
+.theme-toggle{margin-top:16px;background:none;border:none;color:var(--text2);font-size:.78rem;cursor:pointer;width:auto;padding:6px}
+.theme-toggle:hover{color:var(--text)}
+</style></head><body>
+<div class="box">
+  <div class="logo">A</div>
+  <h1>Panel <span>Admin</span></h1>
+  <p>Caza Delivery</p>
+  <form id="form-login">
+    <input type="password" id="pw" placeholder="Contraseña admin" autofocus>
+    <div class="err" id="err">Contraseña incorrecta</div>
+    <button type="submit">Entrar</button>
+  </form>
+  <button class="theme-toggle" onclick="toggleTemaLogin()" id="theme-toggle-btn"><span id="theme-toggle-icon">☾</span> <span id="theme-toggle-label">Modo oscuro</span></button>
+</div>
 <script>
+function aplicarTemaLogin(tema) {
+  document.documentElement.setAttribute("data-theme", tema);
+  document.getElementById("theme-toggle-icon").textContent = tema === "dark" ? "☀" : "☾";
+  document.getElementById("theme-toggle-label").textContent = tema === "dark" ? "Modo claro" : "Modo oscuro";
+}
+function toggleTemaLogin() {
+  const actual = document.documentElement.getAttribute("data-theme");
+  const nuevo = actual === "dark" ? "light" : "dark";
+  localStorage.setItem("admin-theme", nuevo);
+  aplicarTemaLogin(nuevo);
+}
+(function initTemaLogin() {
+  const guardado = localStorage.getItem("admin-theme");
+  const tema = guardado || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  aplicarTemaLogin(tema);
+})();
+
 document.getElementById('form-login').onsubmit = async function(e) {
   e.preventDefault();
   const err = document.getElementById('err');
