@@ -673,9 +673,15 @@ def consumir_codigo_si_aplica(pedido):
         consumir_uso_codigo(fila)
 
 def descripcion_descuento(fila):
-    if fila.get("tipo") == "porcentaje":
-        return f"{int(fila['valor'])}% de descuento"
-    return f"${int(fila['valor']):,}".replace(",", ".") + " de descuento"
+    valor = fila.get("valor", 0)
+    es_porcentaje = fila.get("tipo") == "porcentaje"
+    if (fila.get("aplica_a") or "total") == "domicilio":
+        if es_porcentaje:
+            return "domicilio gratis" if valor >= 100 else f"{int(valor)}% de descuento en el domicilio"
+        return f"${int(valor):,}".replace(",", ".") + " de descuento en el domicilio"
+    if es_porcentaje:
+        return f"{int(valor)}% de descuento"
+    return f"${int(valor):,}".replace(",", ".") + " de descuento"
 
 def consumir_uso_codigo(codigo_row):
     """Descuenta un uso del código; lo desactiva solo si ya no le quedan usos."""
@@ -742,23 +748,33 @@ def build_system_prompt(rest_key, cliente=None, descuento=None):
     if descuento:
         monto_min = descuento.get("monto_minimo") or 0
         monto_min_txt = f"{monto_min:,.0f}".replace(",", ".")
+        aplica_a = descuento.get("aplica_a") or "total"
         condicion_txt = f" — SOLO aplica si el subtotal es de al menos ${monto_min_txt}" if monto_min > 0 else ""
         descuento_txt = f"\nDESCUENTO ACTIVO: {descripcion_descuento(descuento)} (código {descuento['codigo']}){condicion_txt}."
-        if monto_min > 0:
-            instr_descuento = (
-                f"\n- El cliente ya tiene un código de descuento validado (ver DESCUENTO ACTIVO arriba), pero SOLO aplica si "
-                f"el subtotal del pedido (antes del descuento) es de al menos ${monto_min_txt}. Si el pedido no llega a ese "
-                f"monto, avísale amablemente que le falta para poder usar el código, NO apliques el descuento, y deja que "
-                f"continúe su pedido normal sin el descuento si así lo prefiere. Si sí llega al mínimo, deduce el descuento "
-                f"del total antes de mostrar el resumen final, y muestra en el resumen tanto el subtotal como el descuento "
-                f"y el total ya con el descuento aplicado."
+
+        condicion_minimo = (
+            f"Este código SOLO aplica si el subtotal del pedido (antes del descuento) es de al menos ${monto_min_txt}. "
+            f"Si el pedido no llega a ese monto, avísale amablemente que le falta para poder usar el código, NO "
+            f"apliques ningún descuento, y deja que continúe su pedido normal si así lo prefiere. Si sí llega al "
+            f"mínimo: "
+        ) if monto_min > 0 else ""
+
+        if aplica_a == "domicilio":
+            instr_aplicacion = (
+                f"{condicion_minimo}Este código descuenta del COSTO DEL DOMICILIO, no de los productos — resta el "
+                f"valor indicado del costo de domicilio (ver DOMICILIO arriba), SIN que el descuento supere ese "
+                f"costo (como mucho el domicilio queda gratis, nunca se descuenta de la comida ni queda en "
+                f"negativo). Si el pedido es para recoger en el local (no es domicilio), avísale al cliente que "
+                f"este código solo aplica para pedidos a domicilio y no se puede usar en este caso."
             )
         else:
-            instr_descuento = (
-                "\n- El cliente ya tiene un código de descuento validado (ver DESCUENTO ACTIVO arriba). Aplícalo al "
-                "total del pedido antes de mostrar el resumen final, y muestra en el resumen tanto el subtotal como "
-                "el descuento y el total ya con el descuento aplicado."
-            )
+            instr_aplicacion = f"{condicion_minimo}Descuéntalo del total del pedido."
+
+        instr_descuento = (
+            f"\n- El cliente ya tiene un código de descuento validado (ver DESCUENTO ACTIVO arriba). {instr_aplicacion} "
+            f"Antes de mostrar el resumen final, muestra el subtotal, el descuento aplicado y el total ya con el "
+            f"descuento (o el costo de domicilio ya rebajado, según corresponda)."
+        )
     else:
         instr_descuento = (
             "\n- Antes de mostrar el resumen final, pregúntale al cliente si tiene algún código de descuento o "
@@ -2221,6 +2237,7 @@ async def api_restaurante_panel_crear_codigo(request: Request):
             "usos_restantes": usos,
             "activo": True,
             "monto_minimo": float(body.get("monto_minimo") or 0),
+            "aplica_a": body.get("aplica_a") or "total",
             "fecha_expiracion": body.get("fecha_expiracion") or None,
         }
         supabase.table("codigos_descuento").insert(fila).execute()
@@ -3320,6 +3337,7 @@ async def admin_crear_codigo(request: Request):
             "usos_restantes": usos,
             "activo": True,
             "monto_minimo": float(body.get("monto_minimo") or 0),
+            "aplica_a": body.get("aplica_a") or "total",
             "fecha_expiracion": body.get("fecha_expiracion") or None,
         }
         supabase.table("codigos_descuento").insert(fila).execute()
