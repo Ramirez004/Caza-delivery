@@ -1182,11 +1182,15 @@ def pedido_asignado_a(pedido_id, dom_id):
 def get_pedidos_sin_asignar():
     """Pedidos de domicilio que están esperando domiciliario, directo desde la BD.
     (Antes esto vivía en un dict en memoria que se borraba con cada reinicio de
-    Railway y solo se llenaba al presionar un botón — por eso a veces los
-    domiciliarios no veían nada en la app.)"""
+    Railway — por eso a veces los domiciliarios no veían nada en la app.)
+    Solo cuentan los que el restaurante ya marcó con "busqueda_domiciliario" (al
+    presionar "Buscar domiciliario") — si no, CUALQUIER pedido nuevo quedaría
+    disponible para que cualquier domiciliario lo acepte de inmediato, sin que
+    el restaurante llegue a revisarlo ni a decidir buscar uno."""
     try:
         res = supabase.table("pedidos").select("*")\
             .eq("tipo", "domicilio")\
+            .eq("busqueda_domiciliario", True)\
             .in_("estado", ["activo", "preparando"])\
             .order("fecha", desc=False)\
             .limit(20).execute()
@@ -2018,6 +2022,7 @@ def _iniciar_busqueda_domiciliario(pedido):
     doms = get_domiciliarios_disponibles()
     if not doms:
         return {"ok": False, "msg": "No hay domiciliarios disponibles en este momento"}
+    supabase.table("pedidos").update({"busqueda_domiciliario": True}).eq("id", pedido_id).execute()
     notificar_domiciliarios_whatsapp(pedido)
     return {"ok": True, "msg": f"Buscando entre {len(doms)} domiciliario(s) disponible(s)"}
 
@@ -2060,7 +2065,11 @@ def _obtener_estado_domiciliario_pedido(pedido_id):
     buscando = False
     if not asignado:
         p = get_pedido_by_id(pedido_id)
-        buscando = bool(p and p.get("tipo") == "domicilio" and p.get("estado") in ["activo", "preparando"])
+        buscando = bool(
+            p and p.get("tipo") == "domicilio"
+            and p.get("estado") in ["activo", "preparando"]
+            and p.get("busqueda_domiciliario")
+        )
     return {"asignado": asignado, "nombre": nombre, "buscando": buscando}
 
 @app.get("/api/pedidos/{pedido_id}/estado-domiciliario")
@@ -2444,6 +2453,8 @@ async def aceptar_pedido_dom(request: Request):
         return {"ok": False, "msg": "Este pedido no es de domicilio"}
     if pedido_check.get("estado") not in ["activo", "preparando"]:
         return {"ok": False, "msg": f"Este pedido ya no está disponible (estado: {pedido_check.get('estado')})"}
+    if not pedido_check.get("busqueda_domiciliario"):
+        return {"ok": False, "msg": "El restaurante todavía no ha iniciado la búsqueda de domiciliario para este pedido"}
     if pedido_ya_asignado(pedido_id):
         return {"ok": False, "msg": "Este pedido ya fue tomado por otro domiciliario"}
     try:
