@@ -673,6 +673,34 @@
       word-break: break-word;
     }
 
+    .card-products {
+      background: var(--surface2);
+      padding: 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      border-left: 3px solid var(--accent1);
+      margin: 12px 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .card-summary-toggle {
+      margin: 8px 0;
+    }
+
+    .card-summary-toggle summary {
+      cursor: pointer;
+      font-size: 11px;
+      color: var(--text3);
+      font-weight: 600;
+    }
+
+    .card-summary-toggle .card-summary {
+      margin-top: 8px;
+    }
+
     .card-mods {
       background: var(--surface2);
       border-left: 3px solid var(--accent1);
@@ -1707,7 +1735,8 @@
           <div class="card-info"><span class="card-info-label">Tel:</span> ${esc(p.numero_cliente)}</div>
           ${p.cliente_nombre?`<div class="card-info"><span class="card-info-label">Cliente:</span> ${esc(p.cliente_nombre)}</div>`:''}
           <div class="card-address">${esc(p.direccion)}</div>
-          <div class="card-summary">${esc(p.resumen||'')}</div>
+          ${p.productos?`<div class="card-products">${esc(p.productos)}</div>`:''}
+          <details class="card-summary-toggle"><summary>Ver mensaje completo del pedido</summary><div class="card-summary">${esc(p.resumen||'')}</div></details>
           ${p.modificaciones&&p.modificaciones.length?`<div class="card-mods"><strong>Modificaciones:</strong><br>${p.modificaciones.map(esc).join('<br>')}</div>`:''}
           ${p.quejas&&p.quejas.length?`<div class="card-complaints"><strong>Quejas:</strong><br>${p.quejas.map(esc).join('<br>')}</div>`:''}
           ${htmlPago(p, pagoPendiente, esFinal)}
