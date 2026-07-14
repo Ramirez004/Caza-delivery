@@ -4,6 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Panel del restaurante — Ipiales Delivery</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/l10n/es.js"></script>
   <style>
     * {
       margin: 0;
@@ -665,8 +668,6 @@
       border-radius: 6px;
       font-size: 12px;
       color: var(--text2);
-      max-height: 100px;
-      overflow-y: auto;
       border-left: 3px solid var(--accent1);
       margin: 12px 0;
       white-space: pre-wrap;
@@ -675,30 +676,29 @@
 
     .card-products {
       background: var(--surface2);
-      padding: 12px;
-      border-radius: 6px;
-      font-size: 13px;
-      font-weight: 600;
-      color: var(--text);
+      padding: 12px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border2);
       border-left: 3px solid var(--accent1);
       margin: 12px 0;
+    }
+
+    .card-products-label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+      color: var(--text3);
+      margin-bottom: 6px;
+    }
+
+    .card-products-body {
+      font-size: 13.5px;
+      font-weight: 600;
+      color: var(--text);
+      line-height: 1.5;
       white-space: pre-wrap;
       word-break: break-word;
-    }
-
-    .card-summary-toggle {
-      margin: 8px 0;
-    }
-
-    .card-summary-toggle summary {
-      cursor: pointer;
-      font-size: 11px;
-      color: var(--text3);
-      font-weight: 600;
-    }
-
-    .card-summary-toggle .card-summary {
-      margin-top: 8px;
     }
 
     @keyframes girar {
@@ -1175,6 +1175,121 @@
         font-size: 12px;
       }
     }
+
+    /* Flatpickr — integrado con la paleta del panel (ver :root arriba) */
+    .flatpickr-calendar {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: var(--shadow-md);
+      font-family: inherit;
+    }
+
+    .flatpickr-calendar.arrowTop:before,
+    .flatpickr-calendar.arrowTop:after {
+      border-bottom-color: var(--surface);
+    }
+
+    .flatpickr-months {
+      border-radius: 10px 10px 0 0;
+    }
+
+    .flatpickr-months .flatpickr-month {
+      color: var(--text);
+      fill: var(--text);
+    }
+
+    .flatpickr-current-month {
+      color: var(--text);
+    }
+
+    .flatpickr-current-month input.cur-year,
+    .flatpickr-current-month .flatpickr-monthDropdown-months {
+      color: var(--text);
+      font-family: inherit;
+    }
+
+    .flatpickr-monthDropdown-months {
+      background: var(--surface);
+    }
+
+    .flatpickr-prev-month svg,
+    .flatpickr-next-month svg {
+      fill: var(--text2);
+    }
+
+    .flatpickr-prev-month:hover svg,
+    .flatpickr-next-month:hover svg {
+      fill: var(--accent1);
+    }
+
+    .flatpickr-weekdays {
+      background: var(--surface);
+    }
+
+    span.flatpickr-weekday {
+      background: var(--surface);
+      color: var(--text3);
+      font-weight: 700;
+    }
+
+    .flatpickr-days {
+      border-color: var(--border2);
+      padding: 4px 6px 8px;
+    }
+
+    .dayContainer {
+      justify-content: space-around;
+    }
+
+    .flatpickr-day {
+      color: var(--text2);
+      border-radius: 6px;
+      margin: 2px 0;
+    }
+
+    .flatpickr-day.today {
+      border-color: var(--accent1);
+    }
+
+    .flatpickr-day.today:hover {
+      color: var(--text);
+    }
+
+    .flatpickr-day:hover {
+      background: var(--surface2);
+      border-color: var(--surface2);
+      color: var(--text);
+    }
+
+    .flatpickr-day.selected,
+    .flatpickr-day.selected:hover,
+    .flatpickr-day.selected:focus {
+      background: linear-gradient(135deg, var(--accent1) 0%, var(--accent2) 100%);
+      border-color: transparent;
+      color: #fff;
+      box-shadow: none;
+    }
+
+    .flatpickr-day.flatpickr-disabled,
+    .flatpickr-day.flatpickr-disabled:hover,
+    .flatpickr-day.prevMonthDay,
+    .flatpickr-day.nextMonthDay {
+      color: var(--text3);
+      opacity: 0.4;
+    }
+
+    .numInputWrapper span.arrowUp:after {
+      border-bottom-color: var(--text2);
+    }
+
+    .numInputWrapper span.arrowDown:after {
+      border-top-color: var(--text2);
+    }
+
+    .numInputWrapper:hover {
+      background: var(--surface2);
+    }
   </style>
 </head>
 <body>
@@ -1300,11 +1415,11 @@
             <div class="form-row">
               <div class="form-group">
                 <label>Desde</label>
-                <input type="date" id="f-filtro-desde">
+                <input type="text" id="f-filtro-desde" placeholder="dd/mm/aaaa" autocomplete="off">
               </div>
               <div class="form-group">
                 <label>Hasta</label>
-                <input type="date" id="f-filtro-hasta">
+                <input type="text" id="f-filtro-hasta" placeholder="dd/mm/aaaa" autocomplete="off">
               </div>
               <div class="form-group" style="flex: 0 0 auto;">
                 <button class="btn btn-primary" onclick="cargarTodo(true)">⊙ Filtrar</button>
@@ -1507,6 +1622,22 @@
     })();
 
     function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+    // Respaldo para pedidos de antes de que se guardara "productos" aparte:
+    // saca la lista de productos directo del mensaje completo del bot, tanto
+    // si viene en tabla markdown ("| Producto | Precio |") como en lista con
+    // emojis, para no dejar la tarjeta sin nada que mostrar.
+    function extraerProductosDeResumen(resumen){
+      if(!resumen) return '';
+      const m=resumen.match(/resumen del pedido[^\n]*\n([\s\S]*?)(?:\*?subtotal|\n---)/i);
+      if(!m) return '';
+      return m[1].split('\n')
+        .map(l=>l.trim())
+        .filter(l=>l && !/^\|?\s*-+\s*\|/.test(l) && !/^\|?\s*producto\s*\|\s*precio/i.test(l))
+        .map(l=>l.replace(/^\|\s?/,'').replace(/\s?\|$/,'').replace(/\s?\|\s?/,' — '))
+        .join('\n')
+        .trim();
+    }
     function toast(msg,tipo){const t=document.getElementById('toast');t.textContent=msg;t.className='toast show';setTimeout(()=>t.className='toast',2500);}
 
     async function cerrarSesion(){
@@ -1552,9 +1683,30 @@
     let todos=[], tabActual="todos", estadoActual={};
     let idsActivosConocidos = null;
 
+    // Flatpickr en los filtros de fecha: dateFormat es lo que lee cargarTodo()
+    // (igual que antes, "aaaa-mm-dd"), altFormat es lo que ve el usuario
+    // (dd/mm/aaaa). Cada uno limita el rango del otro para que no se pueda
+    // elegir un "hasta" antes que el "desde", ni al revés.
+    const fpFiltroDesde = flatpickr('#f-filtro-desde', {
+      locale: 'es',
+      dateFormat: 'Y-m-d',
+      altInput: true,
+      altFormat: 'd/m/Y',
+      disableMobile: true,
+      onChange(selectedDates, dateStr){ fpFiltroHasta.set('minDate', dateStr || null); }
+    });
+    const fpFiltroHasta = flatpickr('#f-filtro-hasta', {
+      locale: 'es',
+      dateFormat: 'Y-m-d',
+      altInput: true,
+      altFormat: 'd/m/Y',
+      disableMobile: true,
+      onChange(selectedDates, dateStr){ fpFiltroDesde.set('maxDate', dateStr || null); }
+    });
+
     function limpiarFiltroFecha(){
-      document.getElementById('f-filtro-desde').value='';
-      document.getElementById('f-filtro-hasta').value='';
+      fpFiltroDesde.clear();
+      fpFiltroHasta.clear();
       cargarTodo();
     }
 
@@ -1764,8 +1916,11 @@
           <div class="card-info"><span class="card-info-label">Tel:</span> ${esc(p.numero_cliente)}</div>
           ${p.cliente_nombre?`<div class="card-info"><span class="card-info-label">Cliente:</span> ${esc(p.cliente_nombre)}</div>`:''}
           <div class="card-address">${esc(p.direccion)}</div>
-          ${p.productos?`<div class="card-products">${esc(p.productos)}</div>`:''}
-          <details class="card-summary-toggle"><summary>Ver mensaje completo del pedido</summary><div class="card-summary">${esc(p.resumen||'')}</div></details>
+          ${(()=>{
+            const productos=(p.productos||extraerProductosDeResumen(p.resumen)).trim();
+            if(productos) return `<div class="card-products"><div class="card-products-label">Productos</div><div class="card-products-body">${esc(productos)}</div></div>`;
+            return p.resumen?`<div class="card-summary">${esc(p.resumen)}</div>`:'';
+          })()}
           ${p.modificaciones&&p.modificaciones.length?`<div class="card-mods"><strong>Modificaciones:</strong><br>${p.modificaciones.map(esc).join('<br>')}</div>`:''}
           ${p.quejas&&p.quejas.length?`<div class="card-complaints"><strong>Quejas:</strong><br>${p.quejas.map(esc).join('<br>')}</div>`:''}
           ${htmlPago(p, pagoPendiente, esFinal)}
