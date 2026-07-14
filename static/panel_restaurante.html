@@ -701,6 +701,24 @@
       margin-top: 8px;
     }
 
+    @keyframes girar {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
+    #icon-actualizar {
+      display: inline-block;
+    }
+
+    #icon-actualizar.girando {
+      animation: girar 0.6s linear infinite;
+    }
+
+    .btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
     .card-mods {
       background: var(--surface2);
       border-left: 3px solid var(--accent1);
@@ -1232,7 +1250,7 @@
           </div>
         </div>
         <div class="header-actions">
-          <button class="btn btn-primary" onclick="cargarTodo()">↻ Actualizar</button>
+          <button class="btn btn-primary" id="btn-actualizar" onclick="cargarTodo(true)"><span id="icon-actualizar">↻</span> Actualizar</button>
           <button class="btn btn-danger" onclick="cerrarSesion()">⊗ Salir</button>
         </div>
       </header>
@@ -1289,7 +1307,7 @@
                 <input type="date" id="f-filtro-hasta">
               </div>
               <div class="form-group" style="flex: 0 0 auto;">
-                <button class="btn btn-primary" onclick="cargarTodo()">⊙ Filtrar</button>
+                <button class="btn btn-primary" onclick="cargarTodo(true)">⊙ Filtrar</button>
                 <button class="btn btn-secondary" onclick="limpiarFiltroFecha()">✕ Ver recientes</button>
               </div>
             </div>
@@ -1540,7 +1558,14 @@
       cargarTodo();
     }
 
-    async function cargarTodo(){
+    async function cargarTodo(manual){
+      // "manual" = lo disparó el usuario (botón Actualizar/Filtrar), no el
+      // refresco automático de fondo — solo ahí mostramos la animación de
+      // carga, para que sepa que su clic sí hizo algo y cuánto falta.
+      const btnActualizar=manual?document.getElementById('btn-actualizar'):null;
+      const iconActualizar=manual?document.getElementById('icon-actualizar'):null;
+      if(btnActualizar){btnActualizar.disabled=true;}
+      if(iconActualizar){iconActualizar.classList.add('girando');}
       try{
         const desde=document.getElementById('f-filtro-desde')?.value||'';
         const hasta=document.getElementById('f-filtro-hasta')?.value||'';
@@ -1563,6 +1588,10 @@
 
         render();stats();contadores();ventasHoy();renderEstado();renderHorarioDesdeEstado();renderResenasPropias();
       }catch(e){console.error(e);}
+      finally{
+        if(btnActualizar){btnActualizar.disabled=false;}
+        if(iconActualizar){iconActualizar.classList.remove('girando');}
+      }
     }
 
     function renderResenasPropias(){
