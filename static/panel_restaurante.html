@@ -457,6 +457,14 @@
       transition: all 0.2s ease;
     }
 
+    /* Flatpickr con static:true envuelve el input en este contenedor — sin
+       este ancho, el calendario se queda angosto en vez de ocupar todo el
+       form-group como los demás campos. */
+    .form-group .flatpickr-wrapper {
+      width: 100%;
+      display: block;
+    }
+
     .form-group input:focus,
     .form-group textarea:focus,
     .form-group select:focus {
@@ -1167,6 +1175,7 @@
 
       .form-row {
         flex-direction: column;
+        align-items: stretch;
         gap: 12px;
       }
 
@@ -1733,15 +1742,19 @@
     // (igual que antes, "aaaa-mm-dd"), altFormat es lo que ve el usuario
     // (dd/mm/aaaa). Cada uno limita el rango del otro para que no se pueda
     // elegir un "hasta" antes que el "desde", ni al revés.
-    // OJO: sin disableMobile (queda en su valor por defecto, false) — en
-    // celular, Flatpickr usa el selector nativo del teléfono en vez de su
-    // propio calendario, porque el calendario propio se posiciona mal en
-    // pantallas chicas (aparecía flotando en la mitad de la pantalla).
+    // disableMobile: true mantiene el calendario propio (bonito, con el tema
+    // oscuro) también en celular. static: true es lo que arregla que apareciera
+    // flotando en la mitad de la pantalla: en vez de calcular su posición
+    // contra todo el documento (que se confunde con la barra inferior fija),
+    // el calendario queda anclado justo debajo del input, dentro de su propio
+    // contenedor.
     const fpFiltroDesde = flatpickr('#f-filtro-desde', {
       locale: 'es',
       dateFormat: 'Y-m-d',
       altInput: true,
       altFormat: 'd/m/Y',
+      disableMobile: true,
+      static: true,
       onChange(selectedDates, dateStr){ fpFiltroHasta.set('minDate', dateStr || null); }
     });
     const fpFiltroHasta = flatpickr('#f-filtro-hasta', {
@@ -1749,6 +1762,8 @@
       dateFormat: 'Y-m-d',
       altInput: true,
       altFormat: 'd/m/Y',
+      disableMobile: true,
+      static: true,
       onChange(selectedDates, dateStr){ fpFiltroDesde.set('maxDate', dateStr || null); }
     });
 
