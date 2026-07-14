@@ -382,6 +382,66 @@
       color: var(--red);
     }
 
+    /* Gráfico de ventas */
+    .chart-bars {
+      display: flex;
+      align-items: flex-end;
+      gap: 9px;
+      height: 140px;
+    }
+
+    .bar-wrap {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .bar {
+      width: 100%;
+      background: linear-gradient(to top, var(--accent1), var(--accent2));
+      border-radius: 5px 5px 0 0;
+      min-height: 4px;
+      transition: all 0.3s ease;
+    }
+
+    .bar:hover {
+      filter: brightness(1.1);
+    }
+
+    .bar-lbl {
+      font-size: 11px;
+      color: var(--text3);
+      text-align: center;
+      font-weight: 500;
+    }
+
+    .bar-val {
+      font-size: 12px;
+      color: var(--accent1);
+      font-weight: 700;
+    }
+
+    .top-producto-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border2);
+      font-size: 13px;
+    }
+
+    .top-producto-row:last-child {
+      border-bottom: none;
+    }
+
+    .top-producto-cant {
+      color: var(--accent1);
+      font-weight: 700;
+      font-size: 12px;
+    }
+
     /* Section Card */
     .section {
       background: var(--surface);
@@ -1464,6 +1524,7 @@
               <div class="form-group" style="flex: 0 0 auto;">
                 <button class="btn btn-primary" onclick="cargarTodo(true)">⊙ Filtrar</button>
                 <button class="btn btn-secondary" onclick="limpiarFiltroFecha()">✕ Ver recientes</button>
+                <button class="btn btn-secondary" onclick="exportarCSV(todos)">⬇ Exportar CSV</button>
               </div>
             </div>
           </div>
@@ -1603,6 +1664,28 @@
 
           <div class="section">
             <div class="section-header">
+              <span class="section-icon">▤</span>
+              <div>
+                <div class="section-title">Ventas últimos 7 días</div>
+                <div class="section-subtitle">No incluye pedidos cancelados</div>
+              </div>
+            </div>
+            <div class="chart-bars" id="chart-ventas-semana"></div>
+          </div>
+
+          <div class="section">
+            <div class="section-header">
+              <span class="section-icon">▦</span>
+              <div>
+                <div class="section-title">Productos más vendidos</div>
+                <div class="section-subtitle">Basado en los pedidos de los últimos 30 días</div>
+              </div>
+            </div>
+            <div id="top-productos-propios"></div>
+          </div>
+
+          <div class="section">
+            <div class="section-header">
               <span class="section-icon">★</span>
               <div>
                 <div class="section-title">Reseñas de clientes</div>
@@ -1663,6 +1746,23 @@
 
     function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 
+    function exportarCSV(lista){
+      if(!lista || !lista.length){ toast('No hay pedidos para exportar', 'error'); return; }
+      const filas = [["ID","Fecha","Cliente","Tipo","Dirección","Productos","Subtotal","Descuento","Total","Pago","Estado"]];
+      lista.forEach(p => filas.push([
+        p.id, p.fecha || '', p.numero_cliente || '', p.tipo || '', p.direccion || '',
+        p.productos || '', p.subtotal || 0, p.descuento_monto || 0, p.total || 0, p.metodo_pago || '', p.estado || ''
+      ]));
+      const csv = filas.map(f => f.map(v => `"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
+      const blob = new Blob(["﻿"+csv], {type:"text/csv;charset=utf-8"});
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `pedidos_${new Date().toISOString().slice(0,10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }
+
     // Respaldo para pedidos de antes de que se guardara "productos" aparte:
     // saca la lista de productos directo del mensaje completo del bot, tanto
     // si viene en tabla markdown ("| Producto | Precio |") como en lista con
@@ -1677,6 +1777,68 @@
         .map(l=>l.replace(/^\|\s?/,'').replace(/\s?\|$/,'').replace(/\s?\|\s?/,' — '))
         .join('\n')
         .trim();
+    }
+
+    function extraerCantidadJS(linea){
+      const m = linea.match(/(?:^|\s)(\d+)\s*[xX]|[xX]\s*(\d+)(?:\s|$)/);
+      if(m){
+        const val = parseInt(m[1] || m[2]);
+        if(!isNaN(val)) return val;
+      }
+      return 1;
+    }
+
+    function nombreProductoJS(linea){
+      let s = linea.replace(/\$\s?[\d.]+.*$/, '');
+      s = s.replace(/^\s*\d+\s*[xX]\s*/, '').replace(/\s*[xX]\s*\d+\s*$/, '');
+      s = s.replace(/[^\p{L}\p{N}\s]/gu, ' ').trim();
+      return s.toLowerCase();
+    }
+
+    function renderVentasSemana(){
+      const cont = document.getElementById('chart-ventas-semana');
+      if(!cont) return;
+      const dias = [];
+      for(let i = 6; i >= 0; i--){
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        dias.push(d);
+      }
+      const ventas = dias.map(d => {
+        const clave = d.toISOString().slice(0,10);
+        const total = todos.filter(p => p.estado !== 'cancelado' && (p.fecha||'').startsWith(clave))
+          .reduce((a,p) => a + (p.total||0), 0);
+        return { dia: d.toLocaleDateString('es-CO', {weekday:'short'}), total };
+      });
+      const max = Math.max(...ventas.map(v => v.total), 1);
+      cont.innerHTML = ventas.map(v => `
+        <div class="bar-wrap">
+          <div class="bar-val">${v.total > 0 ? '$'+Math.round(v.total).toLocaleString('es-CO') : ''}</div>
+          <div class="bar" style="height:${Math.max((v.total/max)*100,4)}px"></div>
+          <div class="bar-lbl">${v.dia}</div>
+        </div>
+      `).join('');
+    }
+
+    function renderTopProductos(){
+      const cont = document.getElementById('top-productos-propios');
+      if(!cont) return;
+      const hace30 = new Date(); hace30.setDate(hace30.getDate() - 30);
+      const conteo = {};
+      todos.filter(p => p.estado !== 'cancelado' && new Date(p.fecha) >= hace30).forEach(p => {
+        const texto = p.productos || extraerProductosDeResumen(p.resumen);
+        if(!texto) return;
+        texto.split('\n').map(l => l.trim()).filter(Boolean).forEach(linea => {
+          const nombre = nombreProductoJS(linea);
+          if(!nombre) return;
+          conteo[nombre] = (conteo[nombre] || 0) + extraerCantidadJS(linea);
+        });
+      });
+      const top = Object.entries(conteo).sort((a,b) => b[1]-a[1]).slice(0,5);
+      if(!top.length){ cont.innerHTML = '<div class="empty">Aún no hay suficientes datos</div>'; return; }
+      cont.innerHTML = top.map(([nombre, cant]) => `
+        <div class="top-producto-row"><span>${esc(nombre)}</span><span class="top-producto-cant">${cant}x</span></div>
+      `).join('');
     }
 
     function htmlPrecios(p){
@@ -1801,7 +1963,7 @@
         }
         idsActivosConocidos = idsActuales;
 
-        render();stats();contadores();ventasHoy();renderEstado();renderHorarioDesdeEstado();renderResenasPropias();
+        render();stats();contadores();ventasHoy();renderEstado();renderHorarioDesdeEstado();renderResenasPropias();renderVentasSemana();renderTopProductos();
       }catch(e){console.error(e);}
       finally{
         if(btnActualizar){btnActualizar.disabled=false;}
@@ -2174,6 +2336,7 @@
         <div class="form-group"><label>Valor (100% si aplica a domicilio = domicilio gratis)</label><input id="fr-cod-valor" type="number" min="0" value="10"></div>
         <div class="form-group"><label>Usos totales disponibles</label><input id="fr-cod-usos" type="number" min="1" value="50"></div>
         <div class="form-group"><label>Monto mínimo de compra (opcional)</label><input id="fr-cod-minimo" type="number" min="0" value="0" placeholder="0 = sin mínimo"></div>
+        <div class="form-group"><label>Fecha de expiración (opcional)</label><input id="fr-cod-expira" type="date"></div>
         <div class="modal-btns">
           <button class="btn btn-secondary" onclick="cerrarModalCodigoRest()">Cancelar</button>
           <button class="btn btn-primary" onclick="guardarCodigoRest()">Guardar</button>
@@ -2191,6 +2354,7 @@
         usos_totales: parseInt(document.getElementById('fr-cod-usos').value) || 1,
         monto_minimo: parseFloat(document.getElementById('fr-cod-minimo').value) || 0,
         aplica_a: document.getElementById('fr-cod-aplica-a').value,
+        fecha_expiracion: document.getElementById('fr-cod-expira').value || null,
       };
       if(!datos.codigo){ toast('El código es obligatorio', 'error'); return; }
       const r = await fetch('/api/restaurante-panel/codigos', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(datos)});
