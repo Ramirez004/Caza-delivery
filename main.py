@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request, HTTPException, UploadFile, File
 from fastapi.responses import PlainTextResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-import anthropic, requests, os, traceback, uuid, re, unicodedata, hmac, hashlib, time
+import anthropic, requests, os, traceback, uuid, re, unicodedata, hmac, hashlib, time, math
 from urllib.parse import quote
 from dotenv import load_dotenv
 from datetime import datetime, timedelta, date
@@ -64,6 +64,59 @@ clientes_eligiendo      = {}
 # registro en pasos: numero -> {"paso": "nombre"|"direccion"}
 clientes_registrando    = {}
 codigo_aplicado = {}  # numero -> fila de codigos_descuento ya validada para este pedido en curso
+
+# ── PERSISTENCIA DE SESIÓN ────────────────────────────────────────────────────
+# Todos los dicts de arriba viven solo en memoria y se pierden con cada
+# reinicio/redeploy de Railway. cargar_sesion/guardar_sesion los respaldan en
+# la tabla sesiones_bot, sin cambiar cómo se leen/escriben en el resto del
+# código — se llaman una vez al entrar y al salir del webhook (ver /webhook).
+def cargar_sesion(numero):
+    """Si este número no está en memoria todavía (primer mensaje suyo desde que
+    arrancó este proceso — típicamente justo después de un reinicio), trae su
+    historial y contexto guardados y llena los dicts en memoria con ellos."""
+    if not numero or numero in historial:
+        return
+    try:
+        res = supabase.table("sesiones_bot").select("*").eq("numero", numero).execute()
+        if not res.data:
+            return
+        fila = res.data[0]
+        historial[numero] = fila.get("historial") or []
+        ctx = fila.get("contexto") or {}
+        if "cliente_restaurante" in ctx: cliente_restaurante[numero] = ctx["cliente_restaurante"]
+        if ctx.get("clientes_eligiendo"): clientes_eligiendo[numero] = True
+        if "clientes_registrando" in ctx: clientes_registrando[numero] = ctx["clientes_registrando"]
+        if "codigo_aplicado" in ctx: codigo_aplicado[numero] = ctx["codigo_aplicado"]
+        if "ubicacion_reciente" in ctx: ubicacion_reciente[numero] = ctx["ubicacion_reciente"]
+        if "clientes_esperando_decision" in ctx: clientes_esperando_decision[numero] = ctx["clientes_esperando_decision"]
+        if "clientes_esperando_calificacion" in ctx: clientes_esperando_calificacion[numero] = ctx["clientes_esperando_calificacion"]
+        if "clientes_esperando_cual_pedido" in ctx: clientes_esperando_cual_pedido[numero] = ctx["clientes_esperando_cual_pedido"]
+    except Exception:
+        traceback.print_exc()
+
+def guardar_sesion(numero):
+    """Guarda el estado actual de este número (historial + contexto) para que
+    sobreviva un reinicio. Se llama al final de cada mensaje procesado."""
+    if not numero:
+        return
+    try:
+        contexto = {}
+        if numero in cliente_restaurante: contexto["cliente_restaurante"] = cliente_restaurante[numero]
+        if numero in clientes_eligiendo: contexto["clientes_eligiendo"] = True
+        if numero in clientes_registrando: contexto["clientes_registrando"] = clientes_registrando[numero]
+        if numero in codigo_aplicado: contexto["codigo_aplicado"] = codigo_aplicado[numero]
+        if numero in ubicacion_reciente: contexto["ubicacion_reciente"] = ubicacion_reciente[numero]
+        if numero in clientes_esperando_decision: contexto["clientes_esperando_decision"] = clientes_esperando_decision[numero]
+        if numero in clientes_esperando_calificacion: contexto["clientes_esperando_calificacion"] = clientes_esperando_calificacion[numero]
+        if numero in clientes_esperando_cual_pedido: contexto["clientes_esperando_cual_pedido"] = clientes_esperando_cual_pedido[numero]
+        supabase.table("sesiones_bot").upsert({
+            "numero": numero,
+            "historial": historial.get(numero, []),
+            "contexto": contexto,
+            "actualizado_en": datetime.now(ZONA_HORARIA).isoformat(),
+        }).execute()
+    except Exception:
+        traceback.print_exc()
 
 INTERVALO_CORTO_MINUTOS = 15
 
@@ -413,6 +466,7 @@ def crear_pedido(numero, resumen, confirmacion_bot, rest_key, datos_estructurado
             consumir_uso_codigo(codigo_fila)
             codigo_aplicado.pop(numero, None)
         supabase.table("pedidos").update(datos_actualizar).eq("id", pedido_id).execute()
+        verificar_subtotal(rest_key, productos_texto, subtotal, pedido_id)
         return get_pedido_by_id(pedido_id), False
 
     pedido_id = str(uuid.uuid4())[:8].upper()
@@ -441,6 +495,7 @@ def crear_pedido(numero, resumen, confirmacion_bot, rest_key, datos_estructurado
     if codigo_fila:
         consumir_uso_codigo(codigo_fila)
         codigo_aplicado.pop(numero, None)
+    verificar_subtotal(rest_key, productos_texto, subtotal, pedido_id)
     return pedido, True
 
 def actualizar_estado_pedido(pedido_id, nuevo_estado):
@@ -570,6 +625,73 @@ def normalizar_texto(s):
     """Quita tildes y pasa a minúsculas para comparar nombres sin depender de acentos."""
     return unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii").lower()
 
+def precios_menu(rest_key):
+    """{nombre_normalizado: precio} de cada producto activo, sacando el precio
+    del "$X.XXX" al final de la descripción (el menú no tiene un campo de
+    precio separado, va embebido en el texto)."""
+    precios = {}
+    for item in get_menu(rest_key):
+        if not item.get("activo", True):
+            continue
+        desc = item.get("descripcion") or ""
+        m = re.findall(r"\$\s?([\d.]+)", desc)
+        if not m:
+            continue
+        try:
+            precio = int(m[-1].replace(".", ""))
+        except (ValueError, TypeError):
+            continue
+        nombre = re.sub(r"\$\s?[\d.]+.*$", "", desc).strip(" -—")
+        if nombre:
+            precios[normalizar_texto(nombre)] = precio
+    return precios
+
+def _extraer_cantidad(linea):
+    """Busca "2x" o "x2" en la línea de un producto; si no hay ninguna, asume 1."""
+    m = re.search(r"(?:^|\s)(\d+)\s*[xX]|[xX]\s*(\d+)(?:\s|$)", linea)
+    if m:
+        try:
+            return int(m.group(1) or m.group(2))
+        except (ValueError, TypeError):
+            pass
+    return 1
+
+def verificar_subtotal(rest_key, productos_texto, subtotal_reportado, pedido_id):
+    """Suma los precios reales del menú para los productos del pedido y, si
+    difiere bastante de lo que calculó Claude, avisa al admin para que revise
+    a mano. NO bloquea ni corrige el pedido — el menú es texto libre y el
+    match no siempre es exacto, así que si hay cualquier línea que no se
+    pueda emparejar con confianza, simplemente no se avisa (para no generar
+    falsas alarmas)."""
+    if not productos_texto or not subtotal_reportado:
+        return
+    precios = precios_menu(rest_key)
+    if not precios:
+        return
+    lineas = [l.strip() for l in productos_texto.split("\n") if l.strip()]
+    if not lineas:
+        return
+    suma = 0
+    for linea in lineas:
+        linea_norm = normalizar_texto(linea)
+        candidatos = [precio for nombre, precio in precios.items() if nombre in linea_norm]
+        if len(candidatos) != 1:
+            return
+        suma += candidatos[0] * _extraer_cantidad(linea)
+    diferencia = abs(suma - subtotal_reportado)
+    umbral = max(2000, subtotal_reportado * 0.05)
+    if diferencia > umbral:
+        try:
+            suma_txt = f"{suma:,.0f}".replace(",", ".")
+            reportado_txt = f"{subtotal_reportado:,.0f}".replace(",", ".")
+            enviar_whatsapp(ADMIN_NUMBER,
+                f"⚠️ *Posible error de cálculo* en el pedido #{pedido_id}\n"
+                f"El bot calculó subtotal: ${reportado_txt}\n"
+                f"Sumando el menú da: ${suma_txt}\n"
+                f"Revisa el pedido a mano.")
+        except Exception:
+            traceback.print_exc()
+
 DIAS_SEMANA = ["lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo"]
 DIAS_SEMANA_ABREV = {"lunes": "Lun", "martes": "Mar", "miercoles": "Mié", "jueves": "Jue", "viernes": "Vie", "sabado": "Sáb", "domingo": "Dom"}
 
@@ -633,6 +755,30 @@ def costo_domicilio(r):
         return int(r.get("costo_domicilio") or 3000) if r else 3000
     except (ValueError, TypeError):
         return 3000
+
+def extraer_lat_lng(texto):
+    """Saca (lat, lng) como floats de un link tipo https://maps.google.com/?q=lat,lng
+    (el mismo formato que usa el bot al recibir una ubicación de WhatsApp, y el
+    que se pide pegar en el panel admin para la ubicación del restaurante).
+    Devuelve (None, None) si no encuentra coordenadas."""
+    if not texto:
+        return None, None
+    m = re.search(r"q=(-?\d+\.?\d*),(-?\d+\.?\d*)", texto)
+    if not m:
+        return None, None
+    try:
+        return float(m.group(1)), float(m.group(2))
+    except (ValueError, TypeError):
+        return None, None
+
+def distancia_km(lat1, lng1, lat2, lng2):
+    """Distancia en línea recta entre dos coordenadas (fórmula de Haversine),
+    sin depender de ningún servicio externo de mapas."""
+    R = 6371
+    dlat = math.radians(lat2 - lat1)
+    dlng = math.radians(lng2 - lng1)
+    a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlng / 2) ** 2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 def calcular_ganancias_dom(dom_id):
     """Suma el costo_domicilio de cada pedido ENTREGADO por este domiciliario,
@@ -2447,7 +2593,17 @@ async def pedidos_pendientes(dom_id: str = "", token: str = ""):
     for p in disponibles:
         cli = get_cliente(p.get("numero_cliente", ""))
         p["cliente_nombre"] = cli.get("nombre", "") if cli else ""
-        p["costo_domicilio"] = costo_domicilio(get_restaurante(p.get("restaurante_id", "")))
+        r_pedido = get_restaurante(p.get("restaurante_id", ""))
+        p["costo_domicilio"] = costo_domicilio(r_pedido)
+        # Distancia real: solo si el cliente compartió ubicación (la dirección
+        # trae un link de maps) y el restaurante tiene su propia ubicación
+        # configurada. Si falta cualquiera de los dos, no se muestra (igual que hoy).
+        p["distancia_km"] = None
+        if r_pedido and r_pedido.get("ubicacion_gps"):
+            lat_rest, lng_rest = extraer_lat_lng(r_pedido["ubicacion_gps"])
+            lat_cli, lng_cli = extraer_lat_lng(p.get("direccion", ""))
+            if lat_rest is not None and lat_cli is not None:
+                p["distancia_km"] = round(distancia_km(lat_rest, lng_rest, lat_cli, lng_cli), 1)
     return {
         "pedido": disponibles[0] if disponibles else None,  # compatibilidad con app vieja
         "pedidos": disponibles,
@@ -2623,6 +2779,7 @@ async def recibir_mensaje(request: Request):
 
     data = await request.json()
     print("DATOS:", data)
+    numero = None
     try:
         entry = data["entry"][0]["changes"][0]["value"]
         if "messages" not in entry:
@@ -2633,12 +2790,35 @@ async def recibir_mensaje(request: Request):
         # ── UBICACIÓN DE WHATSAPP (clip 📎 → Ubicación) ───────────────────────
         if mensaje.get("type") == "location":
             numero = mensaje["from"]
+            cargar_sesion(numero)
             loc = mensaje.get("location", {}) or {}
             lat, lng = loc.get("latitude"), loc.get("longitude")
             nombre_lugar = (loc.get("name") or loc.get("address") or "").strip()
             if lat is None or lng is None:
                 enviar_whatsapp(numero, "No pude leer tu ubicación 😅 Intenta enviarla de nuevo o escribe tu dirección.")
                 return {"status": "ok"}
+
+            # Radio de domicilio: solo se valida si el restaurante activo tiene su
+            # propia ubicación configurada (si no, se comporta igual que antes, sin
+            # validar nada). Si el cliente está fuera del radio, NO se guarda esta
+            # ubicación como dirección — se le avisa y se le ofrece recoger o dar
+            # otra dirección más cercana.
+            rest_key_actual = cliente_restaurante.get(numero)
+            r_actual = get_restaurante(rest_key_actual) if rest_key_actual else None
+            if r_actual and r_actual.get("ubicacion_gps"):
+                lat_rest, lng_rest = extraer_lat_lng(r_actual["ubicacion_gps"])
+                if lat_rest is not None:
+                    dist = distancia_km(lat, lng, lat_rest, lng_rest)
+                    radio = float(r_actual.get("radio_domicilio_km") or 8)
+                    if dist > radio:
+                        dist_txt = f"{dist:,.1f}".replace(",", ".")
+                        enviar_whatsapp(numero,
+                            f"📍 Tu ubicación está a {dist_txt} km de *{r_actual['nombre']}* — fuera de nuestro "
+                            f"radio de entrega ({radio:.0f} km).\n"
+                            f"Escribe otra dirección más cercana o *recoger* para recoger en el local."
+                        )
+                        return {"status": "ok"}
+
             link_maps = f"https://maps.google.com/?q={lat},{lng}"
             direccion_txt = f"{nombre_lugar} — {link_maps}" if nombre_lugar else link_maps
             ubicacion_reciente[numero] = direccion_txt
@@ -2665,6 +2845,7 @@ async def recibir_mensaje(request: Request):
 
         if mensaje.get("type") != "text":
             numero = mensaje["from"]
+            cargar_sesion(numero)
             if numero != ADMIN_NUMBER:
                 enviar_whatsapp(numero, "Por ahora solo puedo leer mensajes de texto 😊")
             return {"status": "ok"}
@@ -2679,6 +2860,7 @@ async def recibir_mensaje(request: Request):
             mensajes_procesados.update(ids[-250:])
 
         numero  = mensaje["from"]
+        cargar_sesion(numero)
         texto   = mensaje["text"]["body"]
         texto_lower = texto.strip().lower()
         print(f"De {numero}: {texto}")
@@ -3090,6 +3272,8 @@ async def recibir_mensaje(request: Request):
 
     except Exception:
         traceback.print_exc()
+    finally:
+        guardar_sesion(numero)
 
     return {"status": "ok"}
 
@@ -3204,6 +3388,8 @@ async def admin_crear_restaurante(request: Request):
             "nequi_numero": body.get("nequi_numero", ""),
             "llave_bre_b": body.get("llave_bre_b", ""),
             "costo_domicilio": int(body.get("costo_domicilio") or 3000),
+            "ubicacion_gps": body.get("ubicacion_gps", ""),
+            "radio_domicilio_km": float(body.get("radio_domicilio_km") or 8),
         }
         supabase.table("restaurantes").insert(r).execute()
         cargar_restaurantes()
@@ -3223,6 +3409,7 @@ async def admin_editar_restaurante(rest_id: str, request: Request):
         datos = {k: v for k, v in body.items() if k not in ["pw", "id"]}
         if "hora_inicio" in datos: datos["hora_inicio"] = int(datos["hora_inicio"])
         if "hora_fin" in datos: datos["hora_fin"] = int(datos["hora_fin"])
+        if "radio_domicilio_km" in datos: datos["radio_domicilio_km"] = float(datos["radio_domicilio_km"] or 8)
         supabase.table("restaurantes").update(datos).eq("id", rest_id).execute()
         cargar_restaurantes()
         return {"ok": True}
