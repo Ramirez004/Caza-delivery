@@ -413,6 +413,7 @@ function render() {
         <h2>${esc(p.restaurante_nombre || "")}</h2>
         <div class="info-row"><b>Cliente</b><span>${esc(p.cliente_nombre || "Sin nombre")}</span></div>
         <div class="info-row"><b>Dirección</b>${htmlDireccion(p.direccion)}</div>
+        ${p.distancia_km != null ? `<div class="info-row"><b>Distancia</b><span>${p.distancia_km} km</span></div>` : ''}
         <div class="info-row"><b>Ganancia</b><span>${money(p.costo_domicilio)}</span></div>
         <button class="btn-aceptar" onclick="aceptarPedido('${p.id}', this)">Aceptar pedido</button>
       </div>

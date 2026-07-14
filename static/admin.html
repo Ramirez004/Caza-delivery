@@ -479,6 +479,9 @@ function abrirModalRestaurante(r) {
     <div class="form-group"><label>Hora apertura (0-23)</label><input id="f-hi" type="number" min="0" max="23" value="${r?.hora_inicio??12}"></div>
     <div class="form-group"><label>Hora cierre (0-23)</label><input id="f-hf" type="number" min="0" max="23" value="${r?.hora_fin??23}"></div>
     <div class="form-group"><label>Costo del domicilio (mismo valor que gana el domiciliario)</label><input id="f-costo-dom" type="number" min="0" value="${r?.costo_domicilio??3000}"></div>
+    <div class="form-group"><label>Ubicación del restaurante (link de Google Maps)</label><input id="f-ubicacion-gps" value="${r?.ubicacion_gps||""}" placeholder="https://maps.google.com/?q=0.8264,-77.6413"></div>
+    <div class="form-group"><label>Radio máximo de domicilio (km)</label><input id="f-radio-domicilio" type="number" min="0" step="0.5" value="${r?.radio_domicilio_km??8}"></div>
+    <p style="font-size:.72rem;color:var(--text2);margin:-8px 0 14px">Para sacar el link: busca la dirección en Google Maps, toca "Compartir" y copia el link. Si dejas la ubicación vacía, no se valida ningún radio (igual que antes). El radio solo aplica cuando el cliente comparte su ubicación por WhatsApp — direcciones escritas a mano no se validan.</p>
     <div class="form-group">
       <label><input type="checkbox" id="f-usar-horario-semanal" ${r?.horario_semanal?"checked":""} onchange="toggleHorarioSemanal()"> Usar horario distinto por día de la semana (opcional)</label>
       <div id="horario-semanal-editor" style="margin-top:10px;display:${r?.horario_semanal?"block":"none"}">${renderHorarioEditor(r?.horario_semanal)}</div>
@@ -523,6 +526,8 @@ async function guardarRestaurante(esEditar, id) {
     hora_inicio: parseInt(document.getElementById("f-hi").value),
     hora_fin: parseInt(document.getElementById("f-hf").value),
     costo_domicilio: parseInt(document.getElementById("f-costo-dom").value) || 3000,
+    ubicacion_gps: document.getElementById("f-ubicacion-gps").value.trim(),
+    radio_domicilio_km: parseFloat(document.getElementById("f-radio-domicilio").value) || 8,
     horario_semanal: document.getElementById("f-usar-horario-semanal").checked ? leerHorarioEditor() : null,
     panel_password: document.getElementById("f-pw-panel").value.trim(),
     whatsapp_notificacion: document.getElementById("f-whatsapp-notif").value.trim(),
