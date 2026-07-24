@@ -67,6 +67,7 @@ clientes_esperando_decision = {}
 clientes_esperando_calificacion = {}  # numero -> [pedido_id, ...] (cola: puede haber más de un pedido por calificar)
 clientes_esperando_cual_pedido = {}  # numero -> {"accion": str, "texto": str, "pedidos": [pedido, ...]}
 clientes_esperando_razon_cancelacion = {}  # numero -> pedido_id (el próximo mensaje se guarda como motivo)
+clientes_esperando_referencia_ubicacion = {}  # numero -> {"contexto":"pedido"|"registro","pin":str,"nombre":str opcional}
 # Última ubicación de WhatsApp enviada por cada cliente (numero -> texto con link de maps)
 ubicacion_reciente = {}
 cliente_restaurante     = {}
@@ -102,6 +103,7 @@ def cargar_sesion(numero):
         if "clientes_esperando_calificacion" in ctx: clientes_esperando_calificacion[numero] = ctx["clientes_esperando_calificacion"]
         if "clientes_esperando_cual_pedido" in ctx: clientes_esperando_cual_pedido[numero] = ctx["clientes_esperando_cual_pedido"]
         if "clientes_esperando_razon_cancelacion" in ctx: clientes_esperando_razon_cancelacion[numero] = ctx["clientes_esperando_razon_cancelacion"]
+        if "clientes_esperando_referencia_ubicacion" in ctx: clientes_esperando_referencia_ubicacion[numero] = ctx["clientes_esperando_referencia_ubicacion"]
     except Exception:
         traceback.print_exc()
 
@@ -121,6 +123,7 @@ def guardar_sesion(numero):
         if numero in clientes_esperando_calificacion: contexto["clientes_esperando_calificacion"] = clientes_esperando_calificacion[numero]
         if numero in clientes_esperando_cual_pedido: contexto["clientes_esperando_cual_pedido"] = clientes_esperando_cual_pedido[numero]
         if numero in clientes_esperando_razon_cancelacion: contexto["clientes_esperando_razon_cancelacion"] = clientes_esperando_razon_cancelacion[numero]
+        if numero in clientes_esperando_referencia_ubicacion: contexto["clientes_esperando_referencia_ubicacion"] = clientes_esperando_referencia_ubicacion[numero]
         supabase.table("sesiones_bot").upsert({
             "numero": numero,
             "historial": historial.get(numero, []),
@@ -3180,26 +3183,23 @@ async def recibir_mensaje(request: Request):
 
             link_maps = f"https://maps.google.com/?q={lat},{lng}"
             direccion_txt = f"{nombre_lugar} — {link_maps}" if nombre_lugar else link_maps
-            ubicacion_reciente[numero] = direccion_txt
+            ubicacion_reciente[numero] = direccion_txt  # respaldo por si nunca contesta la referencia
 
-            # Si está en pleno registro y le pedimos su dirección, la usamos ahí
+            # En vez de dar la ubicación por completada de una vez, se pide una
+            # referencia/dirección escrita para el domiciliario (el pin solo no
+            # es suficientemente claro) — se completa cuando responda (ver el
+            # handler de "clientes_esperando_referencia_ubicacion" más abajo).
             if numero in clientes_registrando and clientes_registrando[numero].get("paso") == "direccion":
-                nombre_reg = clientes_registrando[numero]["nombre"]
-                crear_cliente(numero, nombre_reg, direccion_txt)
-                clientes_registrando.pop(numero)
-                enviar_whatsapp(numero,
-                    f"✅ *¡Listo {nombre_reg}, ya estás registrado!*\n"
-                    f"📍 Guardamos tu ubicación para las entregas.\n\n"
-                    f"Ahora elige un restaurante 👇")
-                enviar_whatsapp(numero, lista_restaurantes())
-                return {"status": "ok"}
-
-            # Si está en medio de un pedido, la inyectamos a la conversación
-            # para que el bot la use como dirección de entrega
-            if numero in historial:
-                historial[numero].append({"role": "user", "content": f"Mi ubicación exacta para la entrega es: {direccion_txt}"})
-                historial[numero].append({"role": "assistant", "content": "📍 ¡Ubicación recibida! La usaré como dirección de entrega de tu pedido."})
-            enviar_whatsapp(numero, "📍 *¡Ubicación recibida!* La usaremos como tu dirección de entrega 😊")
+                clientes_esperando_referencia_ubicacion[numero] = {
+                    "contexto": "registro", "pin": direccion_txt,
+                    "nombre": clientes_registrando[numero]["nombre"],
+                }
+            else:
+                clientes_esperando_referencia_ubicacion[numero] = {"contexto": "pedido", "pin": direccion_txt}
+            enviar_whatsapp(numero,
+                "📍 *¡Ubicación recibida!* Ahora escríbeme la dirección exacta o una referencia clara "
+                "para el domiciliario, en un solo mensaje.\n\n"
+                "Ejemplo: _Carrera 6c # 28-17, barrio Las Américas_")
             return {"status": "ok"}
 
         if mensaje.get("type") != "text":
@@ -3315,6 +3315,35 @@ async def recibir_mensaje(request: Request):
             else:
                 enviar_whatsapp(numero, "No entendí cuál pedido — escribe de nuevo el comando (cancelar pedido / modificar pedido / queja) cuando quieras intentarlo otra vez.")
             return {"status": "ok"}
+
+        # ── REFERENCIA DE UBICACIÓN (respuesta tras compartir el pin de WhatsApp) ──
+        if numero in clientes_esperando_referencia_ubicacion:
+            pendiente = clientes_esperando_referencia_ubicacion.pop(numero)
+            referencia = texto.strip()
+            palabras_no_referencia = ["restaurantes", "menu", "menú", "cancelar", "pedido", "ayuda", "quiero", "hola"]
+            es_referencia_valida = bool(referencia) and not any(p in texto_lower for p in palabras_no_referencia)
+            direccion_final = f"{referencia} — {pendiente['pin']}" if es_referencia_valida else pendiente["pin"]
+            ubicacion_reciente[numero] = direccion_final
+
+            if pendiente["contexto"] == "registro":
+                crear_cliente(numero, pendiente["nombre"], direccion_final)
+                clientes_registrando.pop(numero, None)
+                enviar_whatsapp(numero,
+                    f"✅ *¡Listo {pendiente['nombre']}, ya estás registrado!*\n"
+                    f"📍 Guardamos tu ubicación para las entregas.\n\n"
+                    f"Ahora elige un restaurante 👇")
+                enviar_whatsapp(numero, lista_restaurantes())
+            else:
+                if numero in historial:
+                    historial[numero].append({"role": "user", "content": f"Mi ubicación exacta para la entrega es: {direccion_final}"})
+                    historial[numero].append({"role": "assistant", "content": "📍 ¡Ubicación recibida! La usaré como dirección de entrega de tu pedido."})
+                enviar_whatsapp(numero, "📍 *¡Listo, dirección confirmada!* La usaremos para tu entrega 😊")
+
+            if es_referencia_valida:
+                return {"status": "ok"}
+            # Si no pareció una referencia real (ej. escribió "menú" o "ayuda"), no
+            # se consume el mensaje: la ubicación ya quedó confirmada con el pin
+            # solo, y se deja que este mismo texto siga su curso normal más abajo.
 
         # ── REGISTRO DE CLIENTE ───────────────────────────────────────────────
         if numero in clientes_registrando:
