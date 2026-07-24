@@ -1119,10 +1119,56 @@ async def tarea_recordatorio_inactividad():
             traceback.print_exc()
         await asyncio.sleep(60)
 
+def cerrar_pedidos_vencidos_del_dia():
+    """Cancela automáticamente los pedidos que quedaron activo/preparando de un
+    día anterior y nunca se completaron — para que no sigan bloqueando al
+    cliente con la pregunta de "ya tienes un pedido activo" ni queden
+    pendientes para siempre en el panel. Reutiliza _aplicar_cambio_estado_pedido
+    para que el código de descuento se restaure y el cliente reciba el mismo
+    aviso que en cualquier otra cancelación; además se le avisa al admin."""
+    try:
+        hoy_col = datetime.now(ZONA_HORARIA).date()
+        res = supabase.table("pedidos").select("*").in_("estado", ["activo", "preparando"]).execute()
+        pedidos = res.data or []
+    except Exception:
+        traceback.print_exc()
+        return
+    for p in pedidos:
+        try:
+            fecha_str = (p.get("fecha") or "").replace("Z", "+00:00")
+            fecha_pedido = datetime.fromisoformat(fecha_str)
+            if fecha_pedido.tzinfo is None:
+                fecha_pedido = pytz.utc.localize(fecha_pedido)
+            fecha_pedido_col = fecha_pedido.astimezone(ZONA_HORARIA).date()
+        except Exception:
+            continue
+        if fecha_pedido_col >= hoy_col:
+            continue  # sigue siendo de hoy, no se toca
+        estado_anterior = p["estado"]
+        try:
+            _aplicar_cambio_estado_pedido(p, "cancelado",
+                razon="Cancelado automáticamente: no se completó el mismo día del pedido.")
+            enviar_whatsapp(ADMIN_NUMBER,
+                f"⏰ Pedido #{p['id']} en *{p.get('restaurante_nombre','')}* se cerró automáticamente "
+                f"(quedó \"{estado_anterior}\" desde el {fecha_pedido_col.strftime('%d/%m')} sin completarse).")
+        except Exception:
+            traceback.print_exc()
+
+async def tarea_cerrar_pedidos_vencidos():
+    """Corre en segundo plano: revisa cada hora si hay pedidos de un día
+    anterior que nunca se completaron, para cerrarlos automáticamente."""
+    while True:
+        try:
+            cerrar_pedidos_vencidos_del_dia()
+        except Exception:
+            traceback.print_exc()
+        await asyncio.sleep(60 * 60)
+
 @app.on_event("startup")
 async def iniciar_tareas_programadas():
     asyncio.create_task(tarea_reenganche_clientes())
     asyncio.create_task(tarea_recordatorio_inactividad())
+    asyncio.create_task(tarea_cerrar_pedidos_vencidos())
 
 def restaurantes_activos():
     """{key: r} solo de los restaurantes que el admin NO ha bloqueado — para
@@ -3376,6 +3422,18 @@ async def recibir_mensaje(request: Request):
                     f"_(Escribe la dirección completa o *no tengo* si no tienes una fija)_")
                 return {"status": "ok"}
             elif paso == "direccion":
+                # Validar que de verdad sea una dirección y no una respuesta de
+                # sí/no a la pregunta (ej. "Si tengo") — si no, se guardaría tal
+                # cual y luego aparecería como "tu dirección guardada (Si tengo)".
+                respuestas_no_son_direccion = ["si", "sí", "si tengo", "sí tengo", "tengo",
+                                                "claro", "claro que si", "claro que sí",
+                                                "obvio", "por supuesto", "tengo una"]
+                if texto_lower in respuestas_no_son_direccion:
+                    enviar_whatsapp(numero,
+                        "Necesito que me escribas la dirección completa, no solo si tienes una 😊\n"
+                        "Ejemplo: *Carrera 6c # 28-17, barrio Las Américas*\n"
+                        "O escribe *no tengo* si no tienes una dirección fija.")
+                    return {"status": "ok"}
                 nombre = clientes_registrando[numero]["nombre"]
                 direccion = texto.strip() if texto_lower != "no tengo" else ""
                 crear_cliente(numero, nombre, direccion)
