@@ -66,6 +66,7 @@ INTENTOS_LOGIN_BLOQUEO_SEG = 300
 clientes_esperando_decision = {}
 clientes_esperando_calificacion = {}  # numero -> [pedido_id, ...] (cola: puede haber más de un pedido por calificar)
 clientes_esperando_cual_pedido = {}  # numero -> {"accion": str, "texto": str, "pedidos": [pedido, ...]}
+clientes_esperando_razon_cancelacion = {}  # numero -> pedido_id (el próximo mensaje se guarda como motivo)
 # Última ubicación de WhatsApp enviada por cada cliente (numero -> texto con link de maps)
 ubicacion_reciente = {}
 cliente_restaurante     = {}
@@ -100,6 +101,7 @@ def cargar_sesion(numero):
         if "clientes_esperando_decision" in ctx: clientes_esperando_decision[numero] = ctx["clientes_esperando_decision"]
         if "clientes_esperando_calificacion" in ctx: clientes_esperando_calificacion[numero] = ctx["clientes_esperando_calificacion"]
         if "clientes_esperando_cual_pedido" in ctx: clientes_esperando_cual_pedido[numero] = ctx["clientes_esperando_cual_pedido"]
+        if "clientes_esperando_razon_cancelacion" in ctx: clientes_esperando_razon_cancelacion[numero] = ctx["clientes_esperando_razon_cancelacion"]
     except Exception:
         traceback.print_exc()
 
@@ -118,6 +120,7 @@ def guardar_sesion(numero):
         if numero in clientes_esperando_decision: contexto["clientes_esperando_decision"] = clientes_esperando_decision[numero]
         if numero in clientes_esperando_calificacion: contexto["clientes_esperando_calificacion"] = clientes_esperando_calificacion[numero]
         if numero in clientes_esperando_cual_pedido: contexto["clientes_esperando_cual_pedido"] = clientes_esperando_cual_pedido[numero]
+        if numero in clientes_esperando_razon_cancelacion: contexto["clientes_esperando_razon_cancelacion"] = clientes_esperando_razon_cancelacion[numero]
         supabase.table("sesiones_bot").upsert({
             "numero": numero,
             "historial": historial.get(numero, []),
@@ -578,17 +581,40 @@ def resolver_pedido_o_preguntar(numero, accion, texto_original):
     enviar_whatsapp(numero, f"Tienes varios pedidos activos, ¿cuál? Responde con el número:\n{opciones_txt}")
     return None, False
 
-def ejecutar_cancelar_pedido(pedido, numero):
+def _extraer_razon_inline(texto, texto_lower):
+    """Si el cliente escribió el motivo junto con la palabra clave de cancelar
+    (ej. "cancelar pedido, ya no lo quiero"), lo separa. None si no hay nada más."""
+    for disparador in ["cancelar pedido", "eliminar pedido", "quiero cancelar"]:
+        idx = texto_lower.find(disparador)
+        if idx != -1:
+            resto = texto[idx + len(disparador):].strip(" ,.:;-—")
+            return resto if len(resto) > 2 else None
+    return None
+
+def ejecutar_cancelar_pedido(pedido, numero, razon=None):
     actualizar_estado_pedido(pedido["id"], "cancelado")
+    razon = (razon or "").strip()
+    if razon:
+        try:
+            supabase.table("pedidos").update({"razon_cancelacion": razon}).eq("id", pedido["id"]).execute()
+        except Exception:
+            traceback.print_exc()
+    razon_txt = f"\n📝 Motivo: {razon}" if razon else ""
     enviar_whatsapp(numero, f"❌ Pedido #{pedido['id']} cancelado. ¡Hasta pronto! 🍔")
-    enviar_whatsapp(ADMIN_NUMBER, f"⚠️ Pedido #{pedido['id']} cancelado por +{numero}")
+    enviar_whatsapp(ADMIN_NUMBER, f"⚠️ Pedido #{pedido['id']} cancelado por +{numero}{razon_txt}")
     restaurar_uso_codigo_si_aplica(pedido)
     r_pedido = get_restaurante(pedido.get("restaurante_id", ""))
     notificar_restaurante(r_pedido,
         f"❌ *Pedido #{pedido['id']} CANCELADO por el cliente*\n"
-        f"👤 +{numero}\n\n"
+        f"👤 +{numero}{razon_txt}\n\n"
         f"Si ya lo estabas preparando, puedes detenerlo."
     )
+    # Si no vino un motivo ya escrito junto con "cancelar pedido", le
+    # preguntamos aparte (opcional) — si responde, el próximo mensaje se
+    # guarda como motivo en vez de seguir el flujo normal de conversación.
+    if not razon:
+        enviar_whatsapp(numero, "¿Nos cuentas brevemente por qué cancelaste? (opcional, puedes ignorar este mensaje) 🙏")
+        clientes_esperando_razon_cancelacion[numero] = pedido["id"]
 
 def ejecutar_modificar_pedido(pedido, numero, texto):
     agregar_modificacion(pedido["id"], texto)
@@ -2228,6 +2254,7 @@ function render(){
       ${p.modificaciones&&p.modificaciones.length?`<div class="mods"><strong>Modificaciones:</strong><br>${p.modificaciones.map(esc).join('<br>')}</div>`:''}
       ${p.quejas&&p.quejas.length?`<div class="quejas-box"><strong>Quejas:</strong><br>${p.quejas.map(esc).join('<br>')}</div>`:''}
       <div class="est-lbl ${p.estado}">${EST_MAP[p.estado]||p.estado}</div>
+      ${p.estado==='cancelado'&&p.razon_cancelacion?`<div class="mods"><strong>Motivo de cancelación:</strong><br>${esc(p.razon_cancelacion)}</div>`:''}
       ${!esFinal ? htmlBotonDom(p) : ''}
       <div class="ebts">${BTNS.map(b=>{
         const idxBtn = orden.indexOf(b.k);
@@ -2241,7 +2268,12 @@ function render(){
   }).join('');
 }
 async function cambiarEstado(id,estado){
-  await fetch(`/api/pedidos/${id}/estado`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pw,estado})});
+  let razon=null;
+  if(estado==='cancelado'){
+    razon=prompt('¿Por qué cancelas este pedido? (opcional, puedes dejarlo vacío)');
+    if(razon===null) return;
+  }
+  await fetch(`/api/pedidos/${id}/estado`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pw,estado,razon})});
   cargarPedidos();
 }
 
@@ -2334,7 +2366,7 @@ async def api_pedidos(pw: str = ""):
         p["cliente_nombre"] = cli["nombre"] if cli else ""
     return {"pedidos": todos}
 
-def _aplicar_cambio_estado_pedido(pedido, nuevo):
+def _aplicar_cambio_estado_pedido(pedido, nuevo, razon=None):
     """Valida la transición y aplica el cambio de estado de un pedido ya cargado,
     notificando al cliente por WhatsApp. Reutilizada por el panel general y por
     el panel propio de cada restaurante."""
@@ -2372,6 +2404,11 @@ def _aplicar_cambio_estado_pedido(pedido, nuevo):
     if nuevo == "cancelado" and anterior != "cancelado":
         enviar_whatsapp(numero, f"❌ *Pedido #{pedido_id} cancelado.*\nSi tienes dudas contáctanos. ¡Hasta pronto! 🍔")
         restaurar_uso_codigo_si_aplica(pedido)
+        if razon and razon.strip():
+            try:
+                supabase.table("pedidos").update({"razon_cancelacion": razon.strip()}).eq("id", pedido_id).execute()
+            except Exception:
+                traceback.print_exc()
     return {"ok": True}
 
 def _iniciar_busqueda_domiciliario(pedido):
@@ -2405,7 +2442,7 @@ async def cambiar_estado(pedido_id: str, request: Request):
     pedido = get_pedido_by_id(pedido_id)
     if not pedido:
         raise HTTPException(status_code=404)
-    return _aplicar_cambio_estado_pedido(pedido, nuevo)
+    return _aplicar_cambio_estado_pedido(pedido, nuevo, body.get("razon"))
 
 @app.post("/api/pedidos/{pedido_id}/buscar-domiciliario")
 async def buscar_domiciliario(pedido_id: str, request: Request):
@@ -2518,7 +2555,7 @@ async def api_restaurante_panel_cambiar_estado(pedido_id: str, request: Request)
     pedido = get_pedido_by_id(pedido_id)
     if not pedido or pedido.get("restaurante_id") != rest_key:
         raise HTTPException(status_code=404)
-    return _aplicar_cambio_estado_pedido(pedido, nuevo)
+    return _aplicar_cambio_estado_pedido(pedido, nuevo, body.get("razon"))
 
 @app.post("/api/restaurante-panel/pedidos/{pedido_id}/confirmar-pago")
 async def api_restaurante_panel_confirmar_pago(pedido_id: str, request: Request):
@@ -3113,6 +3150,21 @@ async def recibir_mensaje(request: Request):
             )
             return {"status": "ok"}
 
+        # ── MOTIVO DE CANCELACIÓN (respuesta opcional tras cancelar un pedido) ──
+        if numero in clientes_esperando_razon_cancelacion:
+            pedido_id_cancelado = clientes_esperando_razon_cancelacion.pop(numero)
+            texto_razon = texto.strip()
+            # Si el mensaje parece ser otra cosa (un comando, un pedido nuevo,
+            # etc.) no lo tratamos como motivo — lo dejamos seguir su flujo normal.
+            palabras_no_motivo = ["restaurantes", "menu", "menú", "cancelar", "pedido", "ayuda", "quiero"]
+            if texto_razon and not any(p in texto_lower for p in palabras_no_motivo):
+                try:
+                    supabase.table("pedidos").update({"razon_cancelacion": texto_razon}).eq("id", pedido_id_cancelado).execute()
+                    enviar_whatsapp(numero, "¡Gracias por contarnos! 🙏")
+                except Exception:
+                    traceback.print_exc()
+                return {"status": "ok"}
+
         # ── CALIFICACIÓN DE SERVICIO ───────────────────────────────────────────
         if clientes_esperando_calificacion.get(numero):
             m = re.match(r"^\s*([1-5])(?:\s+(.*))?$", texto.strip(), re.DOTALL)
@@ -3140,7 +3192,8 @@ async def recibir_mensaje(request: Request):
                 pedido_elegido = opciones[idx]
                 accion = pendiente["accion"]
                 if accion == "cancelar":
-                    ejecutar_cancelar_pedido(pedido_elegido, numero)
+                    razon_inline = _extraer_razon_inline(pendiente["texto"], pendiente["texto"].lower())
+                    ejecutar_cancelar_pedido(pedido_elegido, numero, razon_inline)
                 elif accion == "modificar":
                     ejecutar_modificar_pedido(pedido_elegido, numero, pendiente["texto"])
                 elif accion == "queja":
@@ -3319,11 +3372,12 @@ async def recibir_mensaje(request: Request):
         if not saltar_palabras_clave:
 
             if any(p in texto_lower for p in ["cancelar pedido", "eliminar pedido", "quiero cancelar"]):
+                razon_inline = _extraer_razon_inline(texto, texto_lower)
                 pedido, resuelto = resolver_pedido_o_preguntar(numero, "cancelar", texto)
                 if not resuelto:
                     return {"status": "ok"}  # se le preguntó cuál pedido, esperando respuesta
                 if pedido:
-                    ejecutar_cancelar_pedido(pedido, numero)
+                    ejecutar_cancelar_pedido(pedido, numero, razon_inline)
                 else:
                     enviar_whatsapp(numero, "No encontramos un pedido activo para cancelar.")
                 return {"status": "ok"}
