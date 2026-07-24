@@ -772,18 +772,33 @@ def esta_abierto(rest_key):
         return _dentro_de_horario(ahora.hour, cfg.get("hora_inicio", 0), cfg.get("hora_fin", 0))
     return _dentro_de_horario(ahora.hour, r["hora_inicio"], r["hora_fin"])
 
+def _formato_hora_12h(hora):
+    """Convierte una hora 0-23 a texto de 12 horas con a.m./p.m. (ej. 2 -> "2:00 a.m.",
+    14 -> "2:00 p.m."). Se calcula aquí para no dejarle a Claude adivinar si una
+    hora como "2:00" es de la madrugada o de la tarde — sobre todo en horarios
+    que cruzan la medianoche, donde adivinar mal es fácil."""
+    try:
+        hora = int(hora) % 24
+    except (ValueError, TypeError):
+        hora = 0
+    sufijo = "a.m." if hora < 12 else "p.m."
+    hora_12 = hora % 12
+    if hora_12 == 0:
+        hora_12 = 12
+    return f"{hora_12}:00 {sufijo}"
+
 def formato_horario(r):
     """Texto legible del horario: por día si hay horario_semanal configurado,
     o la franja fija de siempre si no."""
     horario = r.get("horario_semanal")
     if not horario:
-        return f"{r['hora_inicio']}:00 – {r['hora_fin']}:00 (todos los días)"
+        return f"{_formato_hora_12h(r['hora_inicio'])} – {_formato_hora_12h(r['hora_fin'])} (todos los días)"
     partes = []
     for dia in DIAS_SEMANA:
         cfg = horario.get(dia) or {}
         abrev = DIAS_SEMANA_ABREV[dia]
         if cfg.get("abierto"):
-            partes.append(f"{abrev} {cfg.get('hora_inicio', 0)}:00-{cfg.get('hora_fin', 0)}:00")
+            partes.append(f"{abrev} {_formato_hora_12h(cfg.get('hora_inicio', 0))}-{_formato_hora_12h(cfg.get('hora_fin', 0))}")
         else:
             partes.append(f"{abrev} Cerrado")
     return ", ".join(partes)
@@ -3311,7 +3326,7 @@ async def recibir_mensaje(request: Request):
                 r = _cache_restaurantes[rest_key]
                 enviar_whatsapp(numero,
                     f"😔 *{r['nombre']}* está cerrado ahora.\n"
-                    f"Horario: {r['hora_inicio']}:00 – {r['hora_fin']}:00.\n\n"
+                    f"Horario: {formato_horario(r)}.\n\n"
                     + lista_restaurantes())
                 return {"status": "ok"}
 
@@ -3346,7 +3361,7 @@ async def recibir_mensaje(request: Request):
             return {"status": "ok"}
 
         if not esta_abierto(rest_key) and numero != ADMIN_NUMBER:
-            enviar_whatsapp(numero, f"😔 *{r_actual['nombre']}* cerró. Horario: {r_actual['hora_inicio']}:00–{r_actual['hora_fin']}:00. ¡Hasta mañana! 🙏")
+            enviar_whatsapp(numero, f"😔 *{r_actual['nombre']}* cerró. Horario: {formato_horario(r_actual)}. ¡Hasta mañana! 🙏")
             cliente_restaurante.pop(numero, None)
             codigo_aplicado.pop(numero, None)
             return {"status": "ok"}
