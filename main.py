@@ -3620,7 +3620,13 @@ async def recibir_mensaje(request: Request):
                     enviar_whatsapp(numero, "No pude cargar tu historial ahora.")
                 return {"status": "ok"}
 
-            pedido_activo = buscar_pedido_activo_cliente(numero)
+            # Esta pregunta solo tiene sentido en el PRIMER mensaje de una conversación
+            # nueva (recién eligió el restaurante, historial vacío) — si ya lleva varios
+            # mensajes armando este pedido (ej. respondiendo "¿quieres tomar algo?"),
+            # NO se debe interrumpir preguntando por un pedido activo de otro momento,
+            # o se pierde todo lo ya acumulado en el historial al elegir "nuevo".
+            es_primer_mensaje = not historial.get(numero)
+            pedido_activo = buscar_pedido_activo_cliente(numero) if es_primer_mensaje else None
             palabras_pedido = ["quiero", "pedir", "me das", "dame", "una ", "un ", "dos ", "tres ",
                                "combo", "hamburguesa", "pizza", "salchipapa", "perro", "bebida", "gaseosa",
                                "pollo", "burger", "papas", "malteada", "limonada"]
