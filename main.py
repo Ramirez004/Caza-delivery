@@ -126,6 +126,7 @@ def guardar_sesion(numero):
             "historial": historial.get(numero, []),
             "contexto": contexto,
             "actualizado_en": datetime.now(ZONA_HORARIA).isoformat(),
+            "recordatorio_enviado": False,
         }).execute()
     except Exception:
         traceback.print_exc()
@@ -979,6 +980,17 @@ def consumir_uso_codigo(codigo_row):
     except Exception:
         traceback.print_exc()
 
+# Frases que indican que un pedido ya quedó cerrado/confirmado — se usan tanto
+# para detectar el cierre en el webhook como para saber, en el recordatorio de
+# inactividad, si una conversación de pedido quedó a medias o ya terminó.
+PALABRAS_CIERRE_PEDIDO = [
+    "pedido recibido", "en camino", "listo para recoger",
+    "pasamos a preparar", "empezamos a preparar", "estamos preparando",
+    "pedido confirmado", "recibimos tu pedido", "ya recibimos",
+    "tu pedido está", "hemos recibido tu pedido", "pedido anotado",
+    "anotamos tu pedido", "ya está anotado"
+]
+
 REENGANCHE_DIAS = 7
 REENGANCHE_CODIGO = os.getenv("REENGANCHE_CODIGO", "").strip()
 
@@ -1047,9 +1059,67 @@ async def tarea_reenganche_clientes():
             traceback.print_exc()
         await asyncio.sleep(6 * 60 * 60)
 
+RECORDATORIO_INACTIVIDAD_MINUTOS = 5
+RECORDATORIO_INACTIVIDAD_VENTANA_MIN = 20  # tope superior: evita re-disparar sesiones viejas
+
+def enviar_recordatorios_inactividad():
+    """Busca clientes que dejaron un pedido a medias (o el bot les hizo una
+    pregunta puntual) y no volvieron a escribir en RECORDATORIO_INACTIVIDAD_MINUTOS
+    minutos, para mandarles un mensaje corto y recuperar la conversación. No hace
+    falta nada nuevo en memoria: se apoya en lo que sesiones_bot ya guarda
+    (historial, contexto, actualizado_en) en cada mensaje."""
+    ahora = datetime.now(ZONA_HORARIA)
+    desde = (ahora - timedelta(minutes=RECORDATORIO_INACTIVIDAD_VENTANA_MIN)).isoformat()
+    hasta = (ahora - timedelta(minutes=RECORDATORIO_INACTIVIDAD_MINUTOS)).isoformat()
+    try:
+        res = supabase.table("sesiones_bot").select("*") \
+            .eq("recordatorio_enviado", False) \
+            .gte("actualizado_en", desde).lte("actualizado_en", hasta).execute()
+        filas = res.data or []
+    except Exception:
+        traceback.print_exc()
+        return
+    for fila in filas:
+        numero = fila.get("numero")
+        if not numero:
+            continue
+        ctx = fila.get("contexto") or {}
+        hist = fila.get("historial") or []
+        esperando = any(ctx.get(k) for k in [
+            "clientes_esperando_decision", "clientes_esperando_calificacion",
+            "clientes_esperando_cual_pedido", "clientes_esperando_razon_cancelacion",
+            "clientes_eligiendo",
+        ]) or "clientes_registrando" in ctx
+        pedido_en_progreso = False
+        if ctx.get("cliente_restaurante") and hist:
+            ultimo = hist[-1]
+            if ultimo.get("role") == "assistant":
+                pedido_en_progreso = not any(p in ultimo.get("content", "").lower() for p in PALABRAS_CIERRE_PEDIDO)
+        if not (esperando or pedido_en_progreso):
+            continue
+        try:
+            enviar_whatsapp(numero,
+                "¿Sigues ahí? 😊 Cuando quieras seguimos con tu pedido, "
+                "o escribe *menú* para ver las opciones de nuevo.")
+            supabase.table("sesiones_bot").update({"recordatorio_enviado": True}).eq("numero", numero).execute()
+        except Exception:
+            traceback.print_exc()
+
+async def tarea_recordatorio_inactividad():
+    """Corre en segundo plano: revisa cada minuto si hay clientes a medias de
+    un pedido que quedaron callados (ventana de solo 5-20 minutos, por eso el
+    chequeo es tan seguido)."""
+    while True:
+        try:
+            enviar_recordatorios_inactividad()
+        except Exception:
+            traceback.print_exc()
+        await asyncio.sleep(60)
+
 @app.on_event("startup")
 async def iniciar_tareas_programadas():
     asyncio.create_task(tarea_reenganche_clientes())
+    asyncio.create_task(tarea_recordatorio_inactividad())
 
 def restaurantes_activos():
     """{key: r} solo de los restaurantes que el admin NO ha bloqueado — para
@@ -3562,14 +3632,7 @@ async def recibir_mensaje(request: Request):
         enviar_whatsapp(numero, texto_respuesta)
 
         # Detectar cierre de pedido
-        palabras_cierre = [
-            "pedido recibido", "en camino", "listo para recoger",
-            "pasamos a preparar", "empezamos a preparar", "estamos preparando",
-            "pedido confirmado", "recibimos tu pedido", "ya recibimos",
-            "tu pedido está", "hemos recibido tu pedido", "pedido anotado",
-            "anotamos tu pedido", "ya está anotado"
-        ]
-        es_cierre = any(p in texto_respuesta.lower() for p in palabras_cierre)
+        es_cierre = any(p in texto_respuesta.lower() for p in PALABRAS_CIERRE_PEDIDO)
 
         if es_cierre:
             resumen = texto_respuesta
