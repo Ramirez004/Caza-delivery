@@ -475,7 +475,7 @@ def crear_pedido(numero, resumen, confirmacion_bot, rest_key, datos_estructurado
             consumir_uso_codigo(codigo_fila)
             codigo_aplicado.pop(numero, None)
         supabase.table("pedidos").update(datos_actualizar).eq("id", pedido_id).execute()
-        verificar_subtotal(rest_key, productos_texto, subtotal, pedido_id)
+        verificar_subtotal(rest_key, productos_texto, subtotal, pedido_id, tipo)
         return get_pedido_by_id(pedido_id), False
 
     pedido_id = str(uuid.uuid4())[:8].upper()
@@ -504,7 +504,7 @@ def crear_pedido(numero, resumen, confirmacion_bot, rest_key, datos_estructurado
     if codigo_fila:
         consumir_uso_codigo(codigo_fila)
         codigo_aplicado.pop(numero, None)
-    verificar_subtotal(rest_key, productos_texto, subtotal, pedido_id)
+    verificar_subtotal(rest_key, productos_texto, subtotal, pedido_id, tipo)
     return pedido, True
 
 def actualizar_estado_pedido(pedido_id, nuevo_estado):
@@ -664,7 +664,7 @@ def _extraer_cantidad(linea):
             pass
     return 1
 
-def verificar_subtotal(rest_key, productos_texto, subtotal_reportado, pedido_id):
+def verificar_subtotal(rest_key, productos_texto, subtotal_reportado, pedido_id, tipo=None):
     """Suma los precios reales del menú para los productos del pedido y, si
     difiere bastante de lo que calculó Claude, avisa al admin para que revise
     a mano. NO bloquea ni corrige el pedido — el menú es texto libre y el
@@ -679,13 +679,23 @@ def verificar_subtotal(rest_key, productos_texto, subtotal_reportado, pedido_id)
     lineas = [l.strip() for l in productos_texto.split("\n") if l.strip()]
     if not lineas:
         return
+    r = get_restaurante(rest_key)
+    recargo_dom_producto = float(r.get("recargo_domicilio_producto") or 0) if r else 0
     suma = 0
+    cantidad_total = 0
     for linea in lineas:
         linea_norm = normalizar_texto(linea)
         candidatos = [precio for nombre, precio in precios.items() if nombre in linea_norm]
         if len(candidatos) != 1:
             return
-        suma += candidatos[0] * _extraer_cantidad(linea)
+        cantidad = _extraer_cantidad(linea)
+        suma += candidatos[0] * cantidad
+        cantidad_total += cantidad
+    # Si el restaurante cobra un recargo por producto en domicilio, se lo
+    # sumamos aquí también — si no, esta verificación pensaría por error que
+    # Claude se equivocó en CADA pedido a domicilio de ese restaurante.
+    if tipo == "domicilio" and recargo_dom_producto > 0:
+        suma += cantidad_total * recargo_dom_producto
     diferencia = abs(suma - subtotal_reportado)
     umbral = max(2000, subtotal_reportado * 0.05)
     if diferencia > umbral:
@@ -1004,7 +1014,25 @@ def build_system_prompt(rest_key, cliente=None, descuento=None):
     notas = ("\nNOTAS DE HOY:\n- " + "\n- ".join(extra["notas"])) if extra.get("notas") else ""
     espera = f"\nTIEMPO DE ESPERA: {extra['tiempo_espera']} minutos." if extra.get("tiempo_espera") else ""
     costo_dom_normal = costo_domicilio(r)
-    dom = f"Sí. Costo: ${costo_dom_normal:,}.".replace(",", ".") if extra.get("domicilio_activo", True) else "No disponible."
+    costo_dom_txt = f"{costo_dom_normal:,.0f}".replace(",", ".")
+    # Algunos restaurantes cobran un poco más por producto cuando el pedido es
+    # a domicilio (para cubrir el costo del empaque, por ejemplo). Es opcional,
+    # configurado por restaurante — si está en 0, no cambia nada de lo de antes.
+    recargo_dom_producto = float(r.get("recargo_domicilio_producto") or 0) if r else 0
+    instr_recargo = ""
+    if recargo_dom_producto > 0:
+        recargo_dom_txt = f"{recargo_dom_producto:,.0f}".replace(",", ".")
+        recargo_nota = f" Cada producto tiene un recargo de ${recargo_dom_txt} SI el pedido es a domicilio (no aplica si recoge en el local)."
+        instr_recargo = (
+            f"\n- Si el pedido es a domicilio, súmale ${recargo_dom_txt} al precio de CADA producto (no al total, "
+            f"a cada producto individualmente) antes de calcular el subtotal — es un recargo por domicilio, no "
+            f"aplica si el cliente recoge en el local. Si el cliente pregunta por qué el precio subió o de dónde "
+            f"sale ese aumento, explícale amablemente que es un recargo de ${recargo_dom_txt} por producto "
+            f"cuando el pedido es a domicilio."
+        )
+    else:
+        recargo_nota = ""
+    dom = f"Sí. Costo: ${costo_dom_txt}.{recargo_nota}" if extra.get("domicilio_activo", True) else "No disponible."
 
     saludo = ""
     instr_direccion_guardada = (
@@ -1111,7 +1139,7 @@ INSTRUCCIONES:
 - Si un producto aparece marcado como "(NO disponible hoy: ...)", NO lo ofrezcas ni lo agregues al pedido aunque el cliente lo pida — avísale amablemente que hoy no hay y sugiérele otra opción del menú.
 - NUNCA muestres resumen ni total hasta que el cliente diga "es todo", "listo", "eso sería" o similar.{upsell}
 - Solo entonces muestra resumen completo con total.
-- Si el cliente mencionó lugar de entrega, es domicilio. Confirma la dirección.
+- Si el cliente mencionó lugar de entrega, es domicilio. Confirma la dirección.{instr_recargo}
 - Si el pedido es a domicilio y NO tienes clara la dirección, dile textualmente algo como: "Para el domicilio, escríbeme tu dirección completa (barrio, calle/carrera y número), o si prefieres, envíame tu ubicación actual desde WhatsApp (toca el clip 📎 → Ubicación)." No cierres el pedido a domicilio sin dirección confirmada por ninguna de esas dos vías.
 - En el resumen final de un pedido a domicilio SIEMPRE detalla los datos de entrega: dirección exacta (o la ubicación que envió) y el nombre de quien recibe.
 - Antes de mostrar el resumen final, pregúntale al cliente cómo va a pagar (elige una de las opciones en MÉTODOS DE PAGO de arriba). Si elige Nequi o Bre-B, dale el número EXACTO que aparece en MÉTODOS DE PAGO y pídele que envíe la foto del comprobante de la transferencia aquí por WhatsApp. Incluye el método de pago elegido en el resumen final.{instr_descuento}
@@ -3569,6 +3597,7 @@ async def admin_crear_restaurante(request: Request):
             "costo_domicilio": int(body.get("costo_domicilio") or 3000),
             "ubicacion_gps": body.get("ubicacion_gps", ""),
             "radio_domicilio_km": float(body.get("radio_domicilio_km") or 8),
+            "recargo_domicilio_producto": float(body.get("recargo_domicilio_producto") or 0),
         }
         supabase.table("restaurantes").insert(r).execute()
         cargar_restaurantes()
@@ -3589,6 +3618,7 @@ async def admin_editar_restaurante(rest_id: str, request: Request):
         if "hora_inicio" in datos: datos["hora_inicio"] = int(datos["hora_inicio"])
         if "hora_fin" in datos: datos["hora_fin"] = int(datos["hora_fin"])
         if "radio_domicilio_km" in datos: datos["radio_domicilio_km"] = float(datos["radio_domicilio_km"] or 8)
+        if "recargo_domicilio_producto" in datos: datos["recargo_domicilio_producto"] = float(datos["recargo_domicilio_producto"] or 0)
         supabase.table("restaurantes").update(datos).eq("id", rest_id).execute()
         cargar_restaurantes()
         return {"ok": True}
