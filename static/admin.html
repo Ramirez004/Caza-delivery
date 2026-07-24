@@ -513,6 +513,7 @@ function abrirModalRestaurante(r) {
     <div class="form-group"><label>Dirección</label><input id="f-dir" value="${r?.direccion||""}" placeholder="Cra 4 #15-32, Ipiales"></div>
     <div class="form-group"><label>Hora apertura (0-23)</label><input id="f-hi" type="number" min="0" max="23" value="${r?.hora_inicio??12}"></div>
     <div class="form-group"><label>Hora cierre (0-23)</label><input id="f-hf" type="number" min="0" max="23" value="${r?.hora_fin??23}"></div>
+    <p style="font-size:.72rem;color:var(--text2);margin:-8px 0 14px">Si cierra después de medianoche, pon la hora tal cual (ej. abre 11 y cierra 2 = abre 11am y cierra 2am del día siguiente) — el sistema ya entiende que cruza la medianoche.</p>
     <div class="form-group"><label>Costo del domicilio (mismo valor que gana el domiciliario)</label><input id="f-costo-dom" type="number" min="0" value="${r?.costo_domicilio??3000}"></div>
     <div class="form-group"><label>Recargo por domicilio (opcional)</label><input id="f-recargo-dom" type="number" min="0" value="${r?.recargo_domicilio_producto??0}" placeholder="0 = sin recargo"></div>
     <div class="form-group">
