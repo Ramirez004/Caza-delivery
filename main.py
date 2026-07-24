@@ -740,6 +740,15 @@ def verificar_subtotal(rest_key, productos_texto, subtotal_reportado, pedido_id,
 DIAS_SEMANA = ["lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo"]
 DIAS_SEMANA_ABREV = {"lunes": "Lun", "martes": "Mar", "miercoles": "Mié", "jueves": "Jue", "viernes": "Vie", "sabado": "Sáb", "domingo": "Dom"}
 
+def _dentro_de_horario(hora_actual, inicio, fin):
+    """Compara si 'hora_actual' (0-23) cae dentro de [inicio, fin). Si fin <= inicio,
+    el horario cruza la medianoche (ej. abre 11, cierra 2 = abre 11am y cierra
+    2am del día siguiente) — en ese caso está abierto si la hora es >= inicio
+    (la noche) O < fin (la madrugada), en vez del rango normal."""
+    if fin <= inicio:
+        return hora_actual >= inicio or hora_actual < fin
+    return inicio <= hora_actual < fin
+
 def esta_abierto(rest_key):
     r = get_restaurante(rest_key)
     if not r:
@@ -760,8 +769,8 @@ def esta_abierto(rest_key):
         cfg = horario.get(dia) or {}
         if not cfg.get("abierto", False):
             return False
-        return cfg.get("hora_inicio", 0) <= ahora.hour < cfg.get("hora_fin", 0)
-    return r["hora_inicio"] <= ahora.hour < r["hora_fin"]
+        return _dentro_de_horario(ahora.hour, cfg.get("hora_inicio", 0), cfg.get("hora_fin", 0))
+    return _dentro_de_horario(ahora.hour, r["hora_inicio"], r["hora_fin"])
 
 def formato_horario(r):
     """Texto legible del horario: por día si hay horario_semanal configurado,
