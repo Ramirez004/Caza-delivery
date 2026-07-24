@@ -3422,20 +3422,25 @@ async def recibir_mensaje(request: Request):
                     f"_(Escribe la dirección completa o *no tengo* si no tienes una fija)_")
                 return {"status": "ok"}
             elif paso == "direccion":
-                # Validar que de verdad sea una dirección y no una respuesta de
-                # sí/no a la pregunta (ej. "Si tengo") — si no, se guardaría tal
-                # cual y luego aparecería como "tu dirección guardada (Si tengo)".
-                respuestas_no_son_direccion = ["si", "sí", "si tengo", "sí tengo", "tengo",
-                                                "claro", "claro que si", "claro que sí",
-                                                "obvio", "por supuesto", "tengo una"]
-                if texto_lower in respuestas_no_son_direccion:
+                # Validar que de verdad sea una dirección y no una respuesta de sí/no
+                # a la pregunta (ej. "Si tengo") — si no, se guardaría tal cual y
+                # luego aparecería como "tu dirección guardada (Si tengo)". Se acepta
+                # tanto dirección con carrera/calle (casas) como conjunto/torres con
+                # número de apto (unidades residenciales) — en ese caso el número de
+                # apto es obligatorio, porque solo el nombre del conjunto (ej. "IPK")
+                # no le sirve al domiciliario para encontrar la unidad exacta.
+                direccion_candidata = texto.strip()
+                tiene_via = re.search(r"\b(carrera|cra|calle|cll)\b", texto_lower) is not None
+                tiene_apto = re.search(r"\b(apto|apartamento)\b", texto_lower) is not None and any(c.isdigit() for c in texto_lower)
+                if texto_lower != "no tengo" and not (tiene_via or tiene_apto):
                     enviar_whatsapp(numero,
-                        "Necesito que me escribas la dirección completa, no solo si tienes una 😊\n"
-                        "Ejemplo: *Carrera 6c # 28-17, barrio Las Américas*\n"
+                        "Necesito más detalle en la dirección 😊\n"
+                        "Si es una casa: escribe la carrera o calle. Ejemplo: *Carrera 6c # 28-17, barrio Las Américas*\n"
+                        "Si es un conjunto o torres: escribe el nombre y el apto. Ejemplo: *Conjunto IPK, Torre 3, Apto 309*\n"
                         "O escribe *no tengo* si no tienes una dirección fija.")
                     return {"status": "ok"}
                 nombre = clientes_registrando[numero]["nombre"]
-                direccion = texto.strip() if texto_lower != "no tengo" else ""
+                direccion = direccion_candidata if texto_lower != "no tengo" else ""
                 crear_cliente(numero, nombre, direccion)
                 clientes_registrando.pop(numero)
                 enviar_whatsapp(numero,
