@@ -1040,9 +1040,17 @@ async def tarea_reenganche_clientes():
 async def iniciar_tareas_programadas():
     asyncio.create_task(tarea_reenganche_clientes())
 
+def restaurantes_activos():
+    """{key: r} solo de los restaurantes que el admin NO ha bloqueado — para
+    que un restaurante bloqueado (activo=False) no le aparezca al cliente en
+    ningún lado, ni en la lista ni al intentar elegirlo por número o nombre.
+    Los comandos de admin y el login del panel propio sí siguen viendo todos
+    (necesitan poder gestionar uno bloqueado), por eso NO se usa ahí."""
+    return {k: r for k, r in _cache_restaurantes.items() if r.get("activo", True)}
+
 def lista_restaurantes():
     lineas = ["🍽️ *Bienvenido a Ipiales Delivery*\n\nElige un restaurante:\n"]
-    for i, (key, r) in enumerate(_cache_restaurantes.items(), 1):
+    for i, (key, r) in enumerate(restaurantes_activos().items(), 1):
         estado = "✅ Abierto" if esta_abierto(key) else "❌ Cerrado"
         lineas.append(f"{i}. *{r['nombre']}* — {estado}\n   📍 {r['direccion']}")
     lineas.append("\nResponde con el *número* o el *nombre* del restaurante.")
@@ -3300,7 +3308,8 @@ async def recibir_mensaje(request: Request):
         # ── CLIENTE SIN RESTAURANTE O ELIGIENDO ──────────────────────────────
         if numero not in cliente_restaurante or numero in clientes_eligiendo:
             clientes_eligiendo[numero] = True
-            keys = list(_cache_restaurantes.keys())
+            disponibles = restaurantes_activos()
+            keys = list(disponibles.keys())
             rest_key = None
             if texto_lower.isdigit():
                 idx = int(texto_lower) - 1
@@ -3308,7 +3317,7 @@ async def recibir_mensaje(request: Request):
                     rest_key = keys[idx]
             if rest_key is None:
                 texto_normalizado = normalizar_texto(texto_lower)
-                for k, r in _cache_restaurantes.items():
+                for k, r in disponibles.items():
                     if normalizar_texto(r["nombre"]) in texto_normalizado or k.replace("_", " ") in texto_lower:
                         rest_key = k
                         break
@@ -3723,6 +3732,14 @@ async def admin_editar_restaurante(rest_id: str, request: Request):
 async def admin_eliminar_restaurante(rest_id: str, request: Request):
     check_admin(request)
     try:
+        # Antes de borrar el restaurante, desvinculamos (no borramos) sus
+        # pedidos existentes — les quitamos la referencia al restaurante para
+        # que la base de datos deje eliminarlo, pero "restaurante_nombre" es
+        # un campo de texto aparte que cada pedido ya guarda, así que el
+        # historial y las estadísticas de ventas NO se pierden, solo dejan de
+        # estar "conectados" a una fila de restaurante que ya no existe.
+        supabase.table("pedidos").update({"restaurante_id": None}).eq("restaurante_id", rest_id).execute()
+        supabase.table("codigos_descuento").delete().eq("restaurante_id", rest_id).execute()
         supabase.table("menu_items").delete().eq("restaurante_id", rest_id).execute()
         supabase.table("restaurantes").delete().eq("id", rest_id).execute()
         cargar_restaurantes()
@@ -3731,7 +3748,7 @@ async def admin_eliminar_restaurante(rest_id: str, request: Request):
     except Exception as e:
         error_txt = str(e).lower()
         if "foreign key" in error_txt or "still referenced" in error_txt:
-            return {"ok": False, "msg": "No se puede eliminar: este restaurante ya tiene pedidos guardados en su historial. Usa 'Bloquear' en vez de 'Eliminar' para desactivarlo sin perder ese historial."}
+            return {"ok": False, "msg": "No se pudo eliminar por una restricción de la base de datos (puede que 'pedidos.restaurante_id' no permita NULL — revisa el SQL pendiente). Mientras tanto, usa 'Bloquear' para desactivarlo sin perder su historial."}
         return {"ok": False, "msg": str(e)}
 
 @app.post("/api/admin/restaurantes/{rest_id}/foto")
