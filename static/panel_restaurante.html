@@ -2105,6 +2105,11 @@
     }
 
     async function cambiarEstado(id,estado,btn){
+      let razon=null;
+      if(estado==='cancelado'){
+        razon=prompt('¿Por qué cancelas este pedido? (opcional, puedes dejarlo vacío)');
+        if(razon===null) return; // se arrepintió, no cancela nada
+      }
       // Optimista: se ve el cambio de inmediato (sin esperar la red) para que el
       // botón responda al toque al instante; cargarTodo() al final corrige
       // cualquier cosa si el servidor no aceptó el cambio.
@@ -2116,7 +2121,7 @@
         if(statusEl){statusEl.textContent=EST_MAP[estado]||estado;statusEl.className=`card-status ${estado}`;}
       }
       try{
-        await fetch(`/api/restaurante-panel/pedidos/${id}/estado`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({estado})});
+        await fetch(`/api/restaurante-panel/pedidos/${id}/estado`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({estado,razon})});
       }catch(e){}
       cargarTodo();
     }
@@ -2151,6 +2156,7 @@
           ${p.quejas&&p.quejas.length?`<div class="card-complaints"><strong>Quejas:</strong><br>${p.quejas.map(esc).join('<br>')}</div>`:''}
           ${htmlPago(p, pagoPendiente, esFinal)}
           <div class="card-status ${p.estado}">${EST_MAP[p.estado]||p.estado}</div>
+          ${p.estado==='cancelado'&&p.razon_cancelacion?`<div class="card-mods"><strong>Motivo de cancelación:</strong><br>${esc(p.razon_cancelacion)}</div>`:''}
           ${!esFinal?htmlBotonDom(p):''}
           <div class="card-buttons">${BTNS.map(b=>{
             const idxBtn=orden.indexOf(b.k);
