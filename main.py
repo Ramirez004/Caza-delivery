@@ -661,21 +661,32 @@ def normalizar_texto(s):
 
 def precios_menu(rest_key):
     """{nombre_normalizado: precio} de cada producto activo, sacando el precio
-    del "$X.XXX" al final de la descripción (el menú no tiene un campo de
-    precio separado, va embebido en el texto)."""
+    del "$X.XXX" (el menú no tiene un campo de precio separado, va embebido en
+    el texto). Algunos restaurantes ponen nombre+precio en la primera línea y
+    la descripción/ingredientes en las líneas siguientes — por eso el nombre
+    se saca SOLO de la primera línea, para que una descripción larga (varias
+    líneas de ingredientes) no arruine el nombre que se usa para emparejar
+    contra lo que pide el cliente. Si el precio no está en la primera línea,
+    se busca en toda la descripción como respaldo."""
     precios = {}
     for item in get_menu(rest_key):
         if not item.get("activo", True):
             continue
         desc = item.get("descripcion") or ""
-        m = re.findall(r"\$\s?([\d.]+)", desc)
+        primera_linea = desc.split("\n")[0]
+        m = re.findall(r"\$\s?([\d.]+)", primera_linea)
+        if not m:
+            m = re.findall(r"\$\s?([\d.]+)", desc)  # el precio quedó en otra línea
         if not m:
             continue
         try:
             precio = int(m[-1].replace(".", ""))
         except (ValueError, TypeError):
             continue
-        nombre = re.sub(r"\$\s?[\d.]+.*$", "", desc).strip(" -—")
+        # El nombre SIEMPRE sale de la primera línea nada más (quitándole el
+        # precio si estaba ahí) — nunca de la descripción completa, así una
+        # descripción larga en las líneas siguientes no contamina el nombre.
+        nombre = re.sub(r"\$\s?[\d.]+.*$", "", primera_linea).strip(" -—:") or primera_linea.strip(" -—:")
         if nombre:
             precios[normalizar_texto(nombre)] = precio
     return precios
@@ -1209,6 +1220,7 @@ INSTRUCCIONES:
 - Confirma la cantidad exacta de cada producto a medida que el cliente lo va pidiendo.
 - NUNCA agregues al pedido un producto que no esté escrito tal cual en el MENÚ de arriba.
 - Si un producto aparece marcado como "(NO disponible hoy: ...)", NO lo ofrezcas ni lo agregues al pedido aunque el cliente lo pida — avísale amablemente que hoy no hay y sugiérele otra opción del menú.
+- Si el cliente pregunta por ingredientes o detalles de un producto y la descripción del MENÚ de arriba no trae esa información, NUNCA le digas que llame por teléfono ni que no tienes esa información — dile que puede ver todos los detalles escribiendo *menú* (ahí está la carta completa) y sigue ayudándolo con su pedido con normalidad.
 - NUNCA muestres resumen ni total hasta que el cliente diga "es todo", "listo", "eso sería" o similar.{upsell}
 - Cuando el cliente diga eso, todavía falta completar (en orden, sin saltarte ninguno): confirmar dirección si es domicilio, preguntar método de pago, y preguntar por código de descuento si no hay uno ya validado. Ve preguntando lo que falte una cosa a la vez — pero en cuanto tengas TODO completo, muestra el resumen final completo con total EN ESE MISMO MENSAJE, sin esperar a que el cliente te lo pida.
 - Si el cliente mencionó lugar de entrega, es domicilio. Confirma la dirección.{instr_recargo}
